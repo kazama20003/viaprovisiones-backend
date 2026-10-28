@@ -493,6 +493,7 @@ model VarianteProducto {
   sku              String             @db.VarChar(60)
   codigoBarras     String?            @map("codigo_barras") @db.VarChar(80)
   atributos        Json               @default("{}")
+  precioPublico    Decimal?           @map("precio_publico") @db.Decimal(14, 4)
   activa           Boolean            @default(true)
   creadoEn         DateTime           @default(now()) @map("creado_en") @db.Timestamptz(6)
   empresa          Empresa            @relation(fields: [empresaId], references: [id])

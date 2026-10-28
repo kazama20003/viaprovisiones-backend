@@ -14,6 +14,7 @@ import { PrismaService } from '../../../compartido/infraestructura/prisma/prisma
 import { PermisoGuard, RequierePermisos, SesionActual, SesionGuard } from '../../acceso/sesion.guard';
 import type { ContextoAutenticado } from '../../acceso/sesion.guard';
 import { createHash } from 'node:crypto';
+import { claveVariante, combinacionesVariantes } from './variantes';
 
 const estados = ['borrador', 'publicado', 'oculto', 'descontinuado'] as const;
 
@@ -47,12 +48,12 @@ export class ProductosController {
           orderBy: [{ cantidadMinima: 'asc' }, { vigenteDesde: 'desc' }],
           select: { precioUnitario: true, listaPrecios: { select: { nombre: true } } },
         },
-        variantes: { where: { activa: true }, select: { id: true, sku: true, atributos: true, lotes: { select: { existencias: { select: { cantidadFisica: true, cantidadReservada: true } } } } } },
+        variantes: { where: { activa: true }, select: { id: true, sku: true, atributos: true, precioPublico: true, lotes: { where: { estado: 'disponible' }, select: { existencias: { select: { cantidadFisica: true, cantidadReservada: true } } } } } },
         historial: { orderBy: { creadoEn: 'desc' }, take: 20, select: { accion: true, creadoEn: true } },
         lotes: {
           select: {
-            id: true, codigo: true, costoUnitario: true, fechaIngreso: true, garantiaHasta: true, estado: true,
-            proveedor: { select: { nombre: true } },
+            id: true, codigo: true, varianteId: true, costoUnitario: true, fechaIngreso: true, garantiaHasta: true, estado: true,
+            proveedor: { select: { nombre: true } }, variante: { select: { sku: true, atributos: true } },
             existencias: { where: { empresaId: sesion.empresaId }, select: { cantidadFisica: true, cantidadReservada: true, almacen: { select: { id: true, nombre: true, codigo: true } } } },
           },
         },
@@ -74,7 +75,7 @@ export class ProductosController {
       estado: producto.estado,
       visibleEnTienda: producto.visibleEnTienda,
       destacado: producto.destacado,
-      variantes: producto.variantes.map(v => ({ ...v, stock: v.lotes.reduce((s, l) => s + l.existencias.reduce((n, e) => n + Number(e.cantidadFisica) - Number(e.cantidadReservada), 0), 0), lotes: undefined })),
+      variantes: producto.variantes.map(v => ({ ...v, precioPublico: v.precioPublico === null ? null : Number(v.precioPublico), stock: v.lotes.reduce((s, l) => s + l.existencias.reduce((n, e) => n + Number(e.cantidadFisica) - Number(e.cantidadReservada), 0), 0), lotes: undefined })),
       lotes: producto.lotes.map(lote => ({ ...lote, costoUnitario: Number(lote.costoUnitario), existencias: lote.existencias.map(x => ({ ...x, cantidadFisica: Number(x.cantidadFisica), cantidadReservada: Number(x.cantidadReservada) })) })),
       stockDisponible: producto.lotes.filter(lote => lote.estado === 'disponible').reduce((suma, lote) => suma + lote.existencias.reduce((n, x) => n + Number(x.cantidadFisica) - Number(x.cantidadReservada), 0), 0),
     })) };
@@ -103,7 +104,7 @@ export class ProductosController {
         ...extras,
       }, select: { id: true, sku: true, nombre: true, estado: true, creadoEn: true } });
       await this.guardarPrecios(tx, sesion.empresaId, creado.id, cuerpo.precios);
-      await this.guardarVariantes(tx, sesion.empresaId, creado.id, sku, cuerpo.datosAdicionales);
+      await this.guardarVariantes(tx, sesion.empresaId, creado.id, sku, cuerpo.datosAdicionales, cuerpo.preciosVariantes);
       await tx.historialProducto.create({ data: { empresaId: sesion.empresaId, productoId: creado.id, usuarioId: sesion.usuarioId, accion: 'Producto creado' } });
       return creado;
     });
@@ -151,10 +152,10 @@ export class ProductosController {
       if (categoria !== undefined) data.categoriaId = categoria;
       const actualizado = await tx.producto.update({ where: { id }, data, select: { id: true, sku: true, nombre: true, estado: true, visibleEnTienda: true } });
       await this.guardarPrecios(tx, sesion.empresaId, id, cuerpo.precios);
-      await this.guardarVariantes(tx, sesion.empresaId, id, actualizado.sku, cuerpo.datosAdicionales);
+      await this.guardarVariantes(tx, sesion.empresaId, id, actualizado.sku, cuerpo.datosAdicionales, cuerpo.preciosVariantes);
       await tx.historialProducto.create({ data: { empresaId: sesion.empresaId, productoId: id, usuarioId: sesion.usuarioId, accion: 'Producto actualizado' } });
       return actualizado;
-    });
+    }, { isolationLevel: 'Serializable' });
     return { datos: producto };
   }
 
@@ -196,6 +197,7 @@ export class ProductosController {
       const d = cuerpo.datosAdicionales;
       if (!d || typeof d !== 'object' || Array.isArray(d)) throw new BadRequestException('Los detalles del producto no son válidos.');
       const detalles = d as Record<string, unknown>;
+      combinacionesVariantes(detalles);
       for (const key of ['peso', 'medidas', 'garantia', 'tipoEnvio']) if (typeof detalles[key] !== 'string' || (detalles[key] as string).length > 120) throw new BadRequestException(`El campo ${key} no es válido.`);
       for (const key of ['etiquetas', 'colores', 'capacidades']) if (!Array.isArray(detalles[key]) || (detalles[key] as unknown[]).length > 20 || !(detalles[key] as unknown[]).every(x => typeof x === 'string' && x.trim().length > 0 && x.length <= 50)) throw new BadRequestException(`El campo ${key} no es válido.`);
       if (detalles.peso && (!Number.isFinite(Number(detalles.peso)) || Number(detalles.peso) < 0)) throw new BadRequestException('El peso no es válido.');
@@ -213,18 +215,24 @@ export class ProductosController {
     return categoria.id;
   }
 
-  private async guardarVariantes(tx: Pick<PrismaService, 'varianteProducto'>, empresaId: string, productoId: string, sku: string, details: unknown) {
+  private async guardarVariantes(tx: Pick<PrismaService, 'varianteProducto'>, empresaId: string, productoId: string, sku: string, details: unknown, precios: unknown) {
     if (!details || typeof details !== 'object') return;
-    const { colores, capacidades } = details as { colores?: string[]; capacidades?: string[] };
-    if (!Array.isArray(colores) || !Array.isArray(capacidades)) return;
-    const combinaciones = colores.flatMap(color => capacidades.map(capacidad => ({ color, capacidad })));
-    const existentes = await tx.varianteProducto.findMany({ where: { empresaId, productoId } });
+    const combinaciones = combinacionesVariantes(details as Record<string, unknown>);
+    if (precios !== undefined && (!precios || typeof precios !== 'object' || Array.isArray(precios))) throw new BadRequestException('Los precios de variantes no son válidos.');
+    const tablaPrecios = (precios || {}) as Record<string, unknown>;
+    const claves = new Set(combinaciones.map(claveVariante));
+    for (const [clave, valor] of Object.entries(tablaPrecios)) if (!claves.has(clave) || (valor !== null && (typeof valor !== 'number' || !Number.isFinite(valor) || valor < 0))) throw new BadRequestException('El precio de una variante no es válido.');
+    const existentes = await tx.varianteProducto.findMany({ where: { empresaId, productoId }, include: { lotes: { select: { existencias: { select: { cantidadFisica: true } } } } } });
+    const eliminadasConStock = existentes.some(v => v.activa && !claves.has(claveVariante(v.atributos as Record<string, string>)) && v.lotes.some(l => l.existencias.some(e => Number(e.cantidadFisica) > 0)));
+    if (eliminadasConStock) throw new BadRequestException('No se puede quitar una variante que tiene stock. Primero ajusta sus existencias a cero.');
     const activos: string[] = [];
     for (const atributos of combinaciones) {
-      const actual = existentes.find(v => { const a = v.atributos as { color?: string; capacidad?: string }; return a.color === atributos.color && a.capacidad === atributos.capacidad; });
-      if (actual) { await tx.varianteProducto.update({ where: { id: actual.id }, data: { activa: true } }); activos.push(actual.id); continue; }
-      const suffix = createHash('sha256').update(`${productoId}:${atributos.color}:${atributos.capacidad}`).digest('hex').slice(0, 8).toUpperCase();
-      const nueva = await tx.varianteProducto.create({ data: { empresaId, productoId, sku: `${sku.slice(0, 51)}-${suffix}`, atributos } });
+      const clave = claveVariante(atributos);
+      const actual = existentes.find(v => claveVariante(v.atributos as Record<string, string>) === clave);
+      const precioPublico = Object.hasOwn(tablaPrecios, clave) ? tablaPrecios[clave] as number | null : undefined;
+      if (actual) { await tx.varianteProducto.update({ where: { id: actual.id }, data: { activa: true, ...(precioPublico !== undefined ? { precioPublico } : {}) } }); activos.push(actual.id); continue; }
+      const suffix = createHash('sha256').update(`${productoId}:${clave}`).digest('hex').slice(0, 8).toUpperCase();
+      const nueva = await tx.varianteProducto.create({ data: { empresaId, productoId, sku: `${sku.slice(0, 51)}-${suffix}`, atributos, precioPublico } });
       activos.push(nueva.id);
     }
     await tx.varianteProducto.updateMany({ where: { empresaId, productoId, id: { notIn: activos } }, data: { activa: false } });
