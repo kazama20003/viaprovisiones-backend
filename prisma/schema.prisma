@@ -209,6 +209,7 @@ model Empresa {
   clientes             Cliente[]
   proveedores          Proveedor[]
   categorias           Categoria[]
+  marcas               Marca[]
   productos            Producto[]
   listasPrecios        ListaPrecios[]
   almacenes            Almacen[]
@@ -386,6 +387,17 @@ model Proveedor {
   @@unique([empresaId, tipoDocumento, numeroDocumento])
   @@unique([id, empresaId])
   @@map("proveedores")
+}
+
+model Marca {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  empresaId String  @map("empresa_id") @db.Uuid
+  nombre    String  @db.VarChar(100)
+  activa    Boolean @default(true)
+  empresa   Empresa @relation(fields: [empresaId], references: [id])
+
+  @@unique([empresaId, nombre])
+  @@map("marcas")
 }
 
 model Categoria {

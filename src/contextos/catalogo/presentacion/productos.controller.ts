@@ -91,6 +91,7 @@ export class ProductosController {
       if (!categoria) throw new BadRequestException('La categoría no pertenece a esta empresa.');
     }
     const extras = this.campos(cuerpo);
+    if (typeof extras.marca === 'string' && extras.marca) await this.comprobarMarca(sesion.empresaId, extras.marca);
     const producto = await this.prisma.$transaction(async tx => {
       const categoria = await this.guardarCategoria(tx, sesion.empresaId, cuerpo.categoriaNombre);
       const creado = await tx.producto.create({ data: {
@@ -116,9 +117,10 @@ export class ProductosController {
     @SesionActual() sesion: ContextoAutenticado,
     @Body() cuerpo: Record<string, unknown>,
   ) {
-    const actual = await this.prisma.producto.findFirst({ where: { id, empresaId: sesion.empresaId }, select: { id: true, categoriaId: true } });
+    const actual = await this.prisma.producto.findFirst({ where: { id, empresaId: sesion.empresaId }, select: { id: true, categoriaId: true, marca: true } });
     if (!actual) throw new NotFoundException('No se encontró el producto.');
     const data: Record<string, unknown> = this.campos(cuerpo);
+    if (typeof data.marca === 'string' && data.marca && data.marca !== actual.marca) await this.comprobarMarca(sesion.empresaId, data.marca);
     if ('nombre' in cuerpo) data.nombre = this.texto(cuerpo.nombre, 'nombre', 180);
     if ('sku' in cuerpo) data.sku = this.texto(cuerpo.sku, 'sku', 60);
     if ('descripcion' in cuerpo) data.descripcion = this.opcionalTexto(cuerpo.descripcion);
@@ -163,6 +165,11 @@ export class ProductosController {
     return valor.trim();
   }
 
+  private async comprobarMarca(empresaId: string, nombre: string) {
+    const marca = await this.prisma.marca.findFirst({ where: { empresaId, nombre, activa: true } });
+    if (!marca) throw new BadRequestException('Selecciona una marca activa registrada.');
+  }
+
   private opcionalTexto(valor: unknown) {
     if (valor === undefined || valor === null || valor === '') return null;
     if (typeof valor !== 'string') throw new BadRequestException('El campo debe ser texto.');
@@ -172,6 +179,8 @@ export class ProductosController {
   private campos(cuerpo: Record<string, unknown>) {
     const data: Record<string, unknown> = {};
     for (const campo of ['marca', 'codigoBarras']) if (campo in cuerpo) data[campo] = this.opcionalTexto(cuerpo[campo]);
+    if (typeof data.marca === 'string' && data.marca.length > 100) throw new BadRequestException('La marca admite hasta 100 caracteres.');
+    if (typeof data.codigoBarras === 'string' && data.codigoBarras.length > 80) throw new BadRequestException('El código de barras admite hasta 80 caracteres.');
     for (const campo of ['visibleEnTienda', 'destacado', 'permiteDelivery', 'permiteAgencia', 'permiteRecojo']) {
       if (campo in cuerpo) { if (typeof cuerpo[campo] !== 'boolean') throw new BadRequestException(`${campo} debe ser booleano.`); data[campo] = cuerpo[campo]; }
     }
