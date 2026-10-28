@@ -107,7 +107,7 @@ export class CatalogoTiendaController {
           },
           orderBy: [{ cantidadMinima: 'asc' }, { vigenteDesde: 'desc' }],
         },
-        variantes: { where: { activa: true }, orderBy: { sku: 'asc' } },
+        variantes: { where: { activa: true }, orderBy: { sku: 'asc' }, select: { id: true, sku: true, atributos: true, precioPublico: true, lotes: { where: { estado: 'disponible', empresaId }, select: { existencias: { where: { empresaId }, select: { cantidadFisica: true, cantidadReservada: true } } } } } },
       },
     });
 
@@ -116,6 +116,7 @@ export class CatalogoTiendaController {
     return {
       datos: {
         ...producto,
+        variantes: producto.variantes.map(v => ({ id: v.id, sku: v.sku, atributos: v.atributos, precioPublico: v.precioPublico === null ? null : Number(v.precioPublico), stock: v.lotes.reduce((s, l) => s + l.existencias.reduce((n, e) => n + Number(e.cantidadFisica) - Number(e.cantidadReservada), 0), 0) })),
         precios: producto.precios.map((precio) => ({
           ...precio,
           precioUnitario: Number(precio.precioUnitario),
