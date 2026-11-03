@@ -228,6 +228,7 @@ model Empresa {
   cobros               Cobro[]
   movimientosCaja      MovimientoCaja[]
   movimientosStock     MovimientoInventario[]
+  conteosInventario    ConteoInventario[]
   reservasStock        ReservaInventario[]
   traslados            Traslado[]
   devoluciones         Devolucion[]
@@ -269,6 +270,7 @@ model Usuario {
   pagosProveedorRegistrados PagoProveedor[]
   movimientosCaja           MovimientoCaja[]
   movimientosInventario     MovimientoInventario[]
+  conteosInventario         ConteoInventario[]
   trasladosCreados          Traslado[]                 @relation("TrasladoCreador")
   trasladosRecibidos        Traslado[]                 @relation("TrasladoReceptor")
   devolucionesCreadas       Devolucion[]
@@ -588,6 +590,7 @@ model Almacen {
   trasladosOrigen   Traslado[]             @relation("AlmacenOrigen")
   trasladosDestino  Traslado[]             @relation("AlmacenDestino")
   movimientosStock  MovimientoInventario[]
+  conteosInventario ConteoInventario[]
 
   @@unique([empresaId, codigo])
   @@unique([id, empresaId])
@@ -701,6 +704,7 @@ model Lote {
   detalleRecepcion   DetalleRecepcion?      @relation(fields: [detalleRecepcionId], references: [id])
   existencias        ExistenciaLote[]
   movimientos        MovimientoInventario[]
+  conteosInventario  ConteoInventario[]
   reservas           ReservaInventario[]
   lineasTraslado     LineaTraslado[]
 
@@ -1344,4 +1348,24 @@ model Reembolso {
 
   @@index([empresaId, estado, solicitadoEn])
   @@map("reembolsos")
+}
+model ConteoInventario {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  empresaId        String   @map("empresa_id") @db.Uuid
+  loteId           String   @map("lote_id") @db.Uuid
+  almacenId        String   @map("almacen_id") @db.Uuid
+  usuarioId        String   @map("usuario_id") @db.Uuid
+  stockAnterior    Decimal  @map("stock_anterior") @db.Decimal(14, 3)
+  stockReservado   Decimal  @map("stock_reservado") @db.Decimal(14, 3)
+  stockContado     Decimal  @map("stock_contado") @db.Decimal(14, 3)
+  diferencia       Decimal  @db.Decimal(14, 3)
+  motivo           String?  @db.VarChar(250)
+  creadoEn         DateTime @default(now()) @map("creado_en") @db.Timestamptz(6)
+  empresa          Empresa  @relation(fields: [empresaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  lote             Lote     @relation(fields: [loteId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  almacen          Almacen  @relation(fields: [almacenId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  usuario          Usuario  @relation(fields: [usuarioId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([empresaId, creadoEn])
+  @@map("conteos_inventario")
 }
