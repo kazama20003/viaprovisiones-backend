@@ -1089,6 +1089,7 @@ model Traslado {
   creadoEn         DateTime               @default(now()) @map("creado_en") @db.Timestamptz(6)
   recibidoEn       DateTime?              @map("recibido_en") @db.Timestamptz(6)
   observaciones    String?
+  motivoDiferencia String?                @map("motivo_diferencia") @db.VarChar(500)
   empresa          Empresa                @relation(fields: [empresaId], references: [id])
   almacenOrigen    Almacen                @relation("AlmacenOrigen", fields: [almacenOrigenId], references: [id])
   almacenDestino   Almacen                @relation("AlmacenDestino", fields: [almacenDestinoId], references: [id])
