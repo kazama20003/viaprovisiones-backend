@@ -21,7 +21,7 @@ export class InventarioController {
   @RequierePermisos('catalogo.productos.editar')
   async ajustar(@SesionActual() sesion: ContextoAutenticado, @Param('id') id: string, @Body() body: Record<string, unknown>) {
     const { almacenId, cantidad, motivo } = body;
-    if (typeof almacenId !== 'string' || typeof cantidad !== 'number' || !Number.isFinite(cantidad) || cantidad === 0 || Math.abs(cantidad) > 999999 || typeof motivo !== 'string' || !motivo.trim() || motivo.length > 250) throw new BadRequestException('Indica almacén, cantidad y motivo válidos.');
+    if (typeof almacenId !== 'string' || typeof cantidad !== 'number' || !Number.isFinite(cantidad) || cantidad === 0 || Math.abs(cantidad) > 999999 || Math.abs(cantidad * 1000 - Math.round(cantidad * 1000)) > 0.000001 || typeof motivo !== 'string' || !motivo.trim() || motivo.length > 250) throw new BadRequestException('Indica almacén, cantidad y motivo válidos.');
     return this.prisma.$transaction(async tx => {
       const lote = await tx.lote.findFirst({ where: { id, empresaId: sesion.empresaId } });
       const stock = await tx.existenciaLote.findFirst({ where: { loteId: id, almacenId, empresaId: sesion.empresaId } });
@@ -36,18 +36,21 @@ export class InventarioController {
   @Post(':id/trasladar')
   @RequierePermisos('catalogo.productos.editar')
   async trasladar(@SesionActual() sesion: ContextoAutenticado, @Param('id') id: string, @Body() body: Record<string, unknown>) {
-    const { origenId, destino, cantidad } = body;
-    if (typeof origenId !== 'string' || !['TIENDA', 'ALMACEN'].includes(String(destino)) || typeof cantidad !== 'number' || !Number.isFinite(cantidad) || cantidad <= 0 || cantidad > 999999) throw new BadRequestException('Indica origen, destino y cantidad válidos.');
+    const { origenId, destino, destinoId, cantidad } = body;
+    if (typeof origenId !== 'string' || (typeof destinoId !== 'string' && !['TIENDA', 'ALMACEN'].includes(String(destino))) || typeof cantidad !== 'number' || !Number.isFinite(cantidad) || cantidad <= 0 || cantidad > 999999 || Math.abs(cantidad * 1000 - Math.round(cantidad * 1000)) > 0.000001) throw new BadRequestException('Indica origen, destino y cantidad válidos.');
     return this.prisma.$transaction(async tx => {
       const lote = await tx.lote.findFirst({ where: { id, empresaId: sesion.empresaId } });
       const origen = await tx.existenciaLote.findFirst({ where: { loteId: id, almacenId: origenId, empresaId: sesion.empresaId } });
       if (!lote || !origen) throw new BadRequestException('No se encontró la existencia del lote.');
-      const almacen = await tx.almacen.upsert({ where: { empresaId_codigo: { empresaId: sesion.empresaId, codigo: String(destino) } }, create: { empresaId: sesion.empresaId, codigo: String(destino), nombre: destino === 'TIENDA' ? 'Tienda Dean Valdivia' : 'Almacén' }, update: {} });
+      if (lote.estado !== 'disponible' || !(await tx.almacen.findFirst({where:{id:origenId,empresaId:sesion.empresaId,activo:true}}))) throw new BadRequestException('El lote y la ubicación de origen deben estar disponibles.');
+      const almacen = destinoId ? await tx.almacen.findFirst({where:{id:String(destinoId),empresaId:sesion.empresaId,activo:true}}) : await tx.almacen.findFirst({where:{empresaId:sesion.empresaId,codigo:String(destino),activo:true}});
+      if (!almacen) throw new BadRequestException('No se encontró el destino activo.');
       if (almacen.id === origenId) throw new BadRequestException('El origen y el destino deben ser diferentes.');
       const count = await tx.$executeRaw`UPDATE existencias_lotes SET cantidad_fisica = cantidad_fisica - ${cantidad}, actualizado_en = NOW() WHERE id = ${origen.id}::uuid AND empresa_id = ${sesion.empresaId}::uuid AND cantidad_fisica - cantidad_reservada >= ${cantidad}`;
       if (!count) throw new BadRequestException('No hay suficiente stock disponible para trasladar.');
       await tx.existenciaLote.upsert({ where: { loteId_almacenId: { loteId: lote.id, almacenId: almacen.id } }, create: { empresaId: sesion.empresaId, loteId: lote.id, almacenId: almacen.id, cantidadFisica: cantidad }, update: { cantidadFisica: { increment: cantidad } } });
-      const base = { empresaId: sesion.empresaId, productoId: lote.productoId, loteId: lote.id, cantidad, costoUnitario: lote.costoUnitario, usuarioId: sesion.usuarioId };
+      const traslado=await tx.traslado.create({data:{empresaId:sesion.empresaId,almacenOrigenId:origenId,almacenDestinoId:almacen.id,creadoPorId:sesion.usuarioId,recibidoPorId:sesion.usuarioId,recibidoEn:new Date(),numero:`TR-${randomUUID().slice(0,12).toUpperCase()}`,estado:'recibido',observaciones:'Traslado directo',lineas:{create:[{productoId:lote.productoId,loteId:lote.id,cantidadEnviada:cantidad,cantidadRecibida:cantidad}]}}});
+      const base = { empresaId: sesion.empresaId, productoId: lote.productoId, loteId: lote.id, cantidad, costoUnitario: lote.costoUnitario, usuarioId: sesion.usuarioId, trasladoId:traslado.id };
       await tx.movimientoInventario.create({ data: { ...base, almacenId: origenId, tipo: 'traslado_salida', sentido: 'salida' } });
       await tx.movimientoInventario.create({ data: { ...base, almacenId: almacen.id, tipo: 'traslado_entrada', sentido: 'entrada' } });
       return { datos: { id } };
@@ -57,12 +60,12 @@ export class InventarioController {
   @Post()
   @RequierePermisos('catalogo.productos.editar')
   async registrar(@SesionActual() sesion: ContextoAutenticado, @Body() body: Record<string, unknown>) {
-    const { productoId, varianteId, proveedor, cantidad, costoUnitario, fechaIngreso, garantiaHasta, ubicacion, revisar } = body;
+    const { productoId, varianteId, almacenId, proveedor, cantidad, costoUnitario, fechaIngreso, garantiaHasta, ubicacion, revisar } = body;
     if (typeof productoId !== 'string' || !(await this.prisma.producto.findFirst({ where: { id: productoId, empresaId: sesion.empresaId } }))) throw new BadRequestException('Selecciona un producto válido.');
     if (varianteId !== undefined && varianteId !== null && (typeof varianteId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(varianteId))) throw new BadRequestException('Selecciona una variante válida.');
-    if (typeof cantidad !== 'number' || !Number.isFinite(cantidad) || cantidad <= 0 || cantidad > 999999) throw new BadRequestException('La cantidad debe ser mayor que cero.');
+    if (typeof cantidad !== 'number' || !Number.isFinite(cantidad) || cantidad <= 0 || cantidad > 999999 || Math.abs(cantidad * 1000 - Math.round(cantidad * 1000)) > 0.000001) throw new BadRequestException('La cantidad debe ser mayor que cero.');
     if (typeof costoUnitario !== 'number' || !Number.isFinite(costoUnitario) || costoUnitario < 0) throw new BadRequestException('El costo unitario no es válido.');
-    if (ubicacion !== 'Tienda Dean Valdivia' && ubicacion !== 'Almacén') throw new BadRequestException('Selecciona Tienda o Almacén para un lote recibido.');
+    if (typeof almacenId !== 'string' && ubicacion !== 'Tienda Dean Valdivia' && ubicacion !== 'Almacén') throw new BadRequestException('Selecciona una ubicación activa.');
     if (typeof revisar !== 'boolean') throw new BadRequestException('Indica si el lote requiere revisión.');
     if (proveedor !== undefined && (typeof proveedor !== 'string' || proveedor.length > 180)) throw new BadRequestException('El proveedor no es válido.');
     const fecha = (value: unknown, required: boolean) => {
@@ -79,7 +82,8 @@ export class InventarioController {
       const variantes = await tx.varianteProducto.count({ where: { empresaId: sesion.empresaId, productoId, activa: true } });
       if (variantes && !varianteId) throw new BadRequestException('Selecciona la variante para ingresar este lote.');
       if (varianteId && !(await tx.varianteProducto.findFirst({ where: { id: varianteId as string, empresaId: sesion.empresaId, productoId, activa: true } }))) throw new BadRequestException('La variante no pertenece a este producto o está inactiva.');
-      const almacen = await tx.almacen.upsert({ where: { empresaId_codigo: { empresaId: sesion.empresaId, codigo: ubicacion === 'Almacén' ? 'ALMACEN' : 'TIENDA' } }, create: { empresaId: sesion.empresaId, codigo: ubicacion === 'Almacén' ? 'ALMACEN' : 'TIENDA', nombre: ubicacion }, update: {} });
+      const almacen = typeof almacenId==='string' ? await tx.almacen.findFirst({where:{id:almacenId,empresaId:sesion.empresaId,activo:true}}) : await tx.almacen.findFirst({where:{empresaId:sesion.empresaId,codigo:ubicacion==='Almacén'?'ALMACEN':'TIENDA',activo:true}});
+      if (!almacen) throw new BadRequestException('La ubicación no existe o está inactiva.');
       let proveedorId: string | undefined;
       if (typeof proveedor === 'string' && proveedor.trim()) {
         const nombre = proveedor.trim();

@@ -213,6 +213,7 @@ model Empresa {
   productos            Producto[]
   listasPrecios        ListaPrecios[]
   almacenes            Almacen[]
+  sucursales           Sucursal[]
   ordenesCompra        OrdenCompra[]
   recepcionesCompra    RecepcionCompra[]
   detallesRecepcion    DetalleRecepcion[]
@@ -555,14 +556,32 @@ model PrecioProducto {
   @@map("precios_productos")
 }
 
+model Sucursal {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  empresaId String    @map("empresa_id") @db.Uuid
+  codigo    String    @db.VarChar(30)
+  nombre    String    @db.VarChar(120)
+  direccion String?   @db.VarChar(250)
+  activa    Boolean   @default(true)
+  empresa   Empresa   @relation(fields: [empresaId], references: [id])
+  almacenes Almacen[]
+
+  @@unique([empresaId, codigo])
+  @@unique([id, empresaId])
+  @@map("sucursales")
+}
+
 model Almacen {
   id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   empresaId         String                 @map("empresa_id") @db.Uuid
   codigo            String                 @db.VarChar(30)
   nombre            String                 @db.VarChar(120)
   direccion         String?                @db.VarChar(250)
+  tipo              String                 @default("almacen") @db.VarChar(20)
+  sucursalId        String?                @map("sucursal_id") @db.Uuid
   activo            Boolean                @default(true)
   empresa           Empresa                @relation(fields: [empresaId], references: [id])
+  sucursal          Sucursal?              @relation(fields: [sucursalId, empresaId], references: [id, empresaId], onDelete: Restrict)
   existencias       ExistenciaLote[]
   detallesRecepcion DetalleRecepcion[]
   sesionesCaja      SesionCaja[]
