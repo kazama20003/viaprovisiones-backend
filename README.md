@@ -39,6 +39,16 @@ Guarda primero el producto y luego usa «Subir fotos o videos». Se admiten hast
 
 El esquema Prisma define las entidades y relaciones iniciales. Configura `DATABASE_URL` tomando como referencia `.env.example`, genera el cliente con `pnpm db:generate` y aplica migraciones en desarrollo con `pnpm db:migrate:dev -- --name nombre_del_cambio`. En producción usa `pnpm db:migrate:deploy`. No guardes credenciales en el repositorio.
 
+Después de actualizar el código en el servidor, instala las dependencias y aplica las migraciones antes de reiniciar el servicio:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm db:migrate:deploy
+pnpm build
+```
+
+Después reinicia el servicio con el gestor que use el servidor. `pnpm build` genera el cliente Prisma antes de compilar. Los comandos `start`, `start:dev` y `start:debug` también lo generan antes de arrancar; no aplican migraciones automáticamente. Si hay un proceso en modo watch, detenlo y vuelve a iniciarlo tras actualizar el esquema.
+
 Valores iniciales: moneda PEN e IGV 18 %. Cada documento conserva su moneda e impuesto históricos; el modo de mostrar precios con IGV debe confirmarse con el negocio.
 
 ## Comandos
