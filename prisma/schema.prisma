@@ -217,6 +217,7 @@ model Empresa {
   ordenesCompra        OrdenCompra[]
   recepcionesCompra    RecepcionCompra[]
   detallesRecepcion    DetalleRecepcion[]
+  devolucionesProveedor DevolucionProveedor[]
   lotes                Lote[]
   cotizaciones         Cotizacion[]
   pedidos              Pedido[]
@@ -271,6 +272,7 @@ model Usuario {
   movimientosCaja           MovimientoCaja[]
   movimientosInventario     MovimientoInventario[]
   conteosInventario         ConteoInventario[]
+  devolucionesProveedor     DevolucionProveedor[]
   trasladosCreados          Traslado[]                 @relation("TrasladoCreador")
   trasladosRecibidos        Traslado[]                 @relation("TrasladoReceptor")
   devolucionesCreadas       Devolucion[]
@@ -591,6 +593,7 @@ model Almacen {
   trasladosDestino  Traslado[]             @relation("AlmacenDestino")
   movimientosStock  MovimientoInventario[]
   conteosInventario ConteoInventario[]
+  devolucionesProveedor DevolucionProveedor[]
 
   @@unique([empresaId, codigo])
   @@unique([id, empresaId])
@@ -678,6 +681,7 @@ model DetalleRecepcion {
   almacen              Almacen                @relation(fields: [almacenId], references: [id])
   lote                 Lote?
   movimientos          MovimientoInventario[]
+  devolucionesProveedor DevolucionProveedor[]
 
   @@unique([id, empresaId])
   @@map("detalles_recepcion")
@@ -705,6 +709,7 @@ model Lote {
   existencias        ExistenciaLote[]
   movimientos        MovimientoInventario[]
   conteosInventario  ConteoInventario[]
+  devolucionesProveedor DevolucionProveedor[]
   reservas           ReservaInventario[]
   lineasTraslado     LineaTraslado[]
 
@@ -1053,6 +1058,7 @@ model MovimientoInventario {
   movimientoRevertido   MovimientoInventario?    @relation("ReversionInventario", fields: [movimientoRevertidoId], references: [id])
   reversiones           MovimientoInventario[]   @relation("ReversionInventario")
   traslado              Traslado?                @relation(fields: [trasladoId], references: [id])
+  devolucionProveedor   DevolucionProveedor?
 
   @@unique([empresaId, claveIdempotencia])
   @@index([loteId, creadoEn])
@@ -1368,4 +1374,26 @@ model ConteoInventario {
 
   @@index([empresaId, creadoEn])
   @@map("conteos_inventario")
+}
+model DevolucionProveedor {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  empresaId            String   @map("empresa_id") @db.Uuid
+  detalleRecepcionId   String   @map("detalle_recepcion_id") @db.Uuid
+  loteId               String   @map("lote_id") @db.Uuid
+  almacenId            String   @map("almacen_id") @db.Uuid
+  usuarioId            String   @map("usuario_id") @db.Uuid
+  movimientoId         String   @unique @map("movimiento_id") @db.Uuid
+  numero               String   @db.VarChar(30)
+  cantidad             Decimal  @db.Decimal(14, 3)
+  motivo               String   @db.VarChar(250)
+  creadoEn             DateTime @default(now()) @map("creado_en") @db.Timestamptz(6)
+  empresa              Empresa @relation(fields: [empresaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  detalleRecepcion     DetalleRecepcion @relation(fields: [detalleRecepcionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  lote                 Lote @relation(fields: [loteId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  almacen              Almacen @relation(fields: [almacenId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  usuario              Usuario @relation(fields: [usuarioId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  movimiento           MovimientoInventario @relation(fields: [movimientoId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@unique([empresaId, numero])
+  @@index([empresaId, detalleRecepcionId])
+  @@map("devoluciones_proveedor")
 }
