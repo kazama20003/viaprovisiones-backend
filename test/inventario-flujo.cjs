@@ -6,6 +6,7 @@ const {PrismaService}=require('../dist/src/compartido/infraestructura/prisma/pri
 const {InventarioController}=require('../dist/src/contextos/inventario/inventario.controller');
 const {TrasladosController}=require('../dist/src/contextos/inventario/traslados.controller');
 const {KardexController}=require('../dist/src/contextos/inventario/kardex.controller');
+const {UbicacionesController}=require('../dist/src/contextos/inventario/ubicaciones.controller');
 const prisma=new PrismaService();const rollback=Symbol('rollback');
 (async()=>{try{await prisma.$transaction(async tx=>{
  const company=await tx.empresa.create({data:{razonSocial:'Prueba temporal',nombreComercial:'Prueba temporal'}});
@@ -63,6 +64,17 @@ const prisma=new PrismaService();const rollback=Symbol('rollback');
  await tx.proveedor.update({where:{id:proveedor.id},data:{activo:false}});
  await assert.rejects(()=>inv.registrar(sesion,{...baseManual,proveedorId:proveedor.id}));
  assert.equal(await tx.proveedor.count({where:{empresaId:company.id}}),1);
+ const ubicaciones=new UbicacionesController(proxy);
+ assert.equal((await ubicaciones.ubicacionTrabajo(sesion)).datos,null);
+ await ubicaciones.seleccionarUbicacionTrabajo(sesion,{almacenId:a.id});
+ assert.equal((await ubicaciones.ubicacionTrabajo(sesion)).datos.id,a.id);
+ const other=await tx.usuario.create({data:{empresaId:company.id,nombre:'Otro usuario',correo:randomUUID()+'@test.invalid',claveCifrada:'prueba'}});
+ assert.equal((await ubicaciones.ubicacionTrabajo({...sesion,usuarioId:other.id})).datos,null);
+ await assert.rejects(()=>ubicaciones.seleccionarUbicacionTrabajo(sesion,{almacenId:randomUUID()}));
+ assert.equal((await ubicaciones.ubicacionTrabajo(sesion)).datos.id,a.id);
+ await ubicaciones.seleccionarUbicacionTrabajo(sesion,{almacenId:null});
+ assert.equal((await ubicaciones.ubicacionTrabajo(sesion)).datos,null);
+ console.log('Ubicación individual, aislamiento de usuario y validación verificados.');
  console.log('Proveedor existente vinculado y proveedores inválidos o inactivos rechazados.');
  console.log('Flujo correcto: ingreso 10, envío 6, recepción 4+2, conteo 5 y movimientos verificados.');
  throw rollback;

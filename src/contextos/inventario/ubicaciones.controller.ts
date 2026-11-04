@@ -11,6 +11,23 @@ export class UbicacionesController {
   private direccion(v: unknown) { if (v == null || v === '') return null; return this.texto(v, 'La dirección', 250); }
   private codigo(v: unknown) { const c = this.texto(v, 'El código', 30).toUpperCase(); if (!/^[A-Z0-9_-]+$/.test(c)) throw new BadRequestException('El código admite letras, números, guiones y guiones bajos.'); return c; }
 
+  @Get('ubicacion-trabajo') @RequierePermisos('catalogo.productos.leer')
+  async ubicacionTrabajo(@SesionActual() s: ContextoAutenticado) {
+    const usuario = await this.prisma.usuario.findFirst({where:{id:s.usuarioId,empresaId:s.empresaId,activo:true},select:{ubicacionTrabajoId:true}});
+    if (!usuario) throw new NotFoundException('Usuario no encontrado.');
+    const ubicacion = usuario.ubicacionTrabajoId ? await this.prisma.almacen.findFirst({where:{id:usuario.ubicacionTrabajoId,empresaId:s.empresaId,activo:true,OR:[{sucursalId:null},{sucursal:{activa:true}}]},select:{id:true,nombre:true,tipo:true,sucursal:{select:{id:true,nombre:true}}}}) : null;
+    return {datos:ubicacion};
+  }
+  @Patch('ubicacion-trabajo') @RequierePermisos('catalogo.productos.leer')
+  async seleccionarUbicacionTrabajo(@SesionActual() s: ContextoAutenticado, @Body() b:Record<string,unknown>) {
+    const id=b.almacenId;
+    if (id !== null && (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) throw new BadRequestException('Selecciona una ubicación válida.');
+    if (typeof id === 'string' && !(await this.prisma.almacen.findFirst({where:{id,empresaId:s.empresaId,activo:true,OR:[{sucursalId:null},{sucursal:{activa:true}}]}}))) throw new BadRequestException('La ubicación no existe o está inactiva.');
+    const resultado=await this.prisma.usuario.updateMany({where:{id:s.usuarioId,empresaId:s.empresaId,activo:true},data:{ubicacionTrabajoId:id as string|null}});
+    if (!resultado.count) throw new NotFoundException('Usuario no encontrado.');
+    return this.ubicacionTrabajo(s);
+  }
+
   @Get('sucursales') @RequierePermisos('catalogo.productos.leer')
   async sucursales(@SesionActual() s: ContextoAutenticado) { return { datos: await this.prisma.sucursal.findMany({ where: { empresaId: s.empresaId }, orderBy: { nombre: 'asc' }, include: { _count: { select: { almacenes: true } } } }) }; }
 

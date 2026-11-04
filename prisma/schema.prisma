@@ -258,6 +258,7 @@ model Usuario {
   correo                    String                     @db.VarChar(254)
   claveCifrada              String                     @map("clave_cifrada")
   activo                    Boolean                    @default(true)
+  ubicacionTrabajoId        String?                    @map("ubicacion_trabajo_id") @db.Uuid
   ultimoAccesoEn            DateTime?                  @map("ultimo_acceso_en") @db.Timestamptz(6)
   creadoEn                  DateTime                   @default(now()) @map("creado_en") @db.Timestamptz(6)
   empresa                   Empresa                    @relation(fields: [empresaId], references: [id])
