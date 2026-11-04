@@ -7,7 +7,7 @@ describe('TrasladosController', () => {
   const lineaId='11111111-1111-4111-8111-111111111111';
   const base = { id:'traslado', estado:'en_camino', almacenOrigenId:'origen', almacenDestinoId:'destino', almacenOrigen:{activo:true}, almacenDestino:{activo:true}, lineas:[{id:lineaId,loteId:'lote',productoId:'producto',cantidadEnviada:10,cantidadRecibida:0,lote:{estado:'disponible',costoUnitario:2}}] };
   const crear = (t:any, cantidadActualizada=1, claim=1) => {
-    const tx:any={ traslado:{findFirst:jest.fn().mockResolvedValue(t),updateMany:jest.fn().mockResolvedValue({count:claim})}, $executeRaw:jest.fn().mockResolvedValue(cantidadActualizada), movimientoInventario:{create:jest.fn()}, existenciaLote:{upsert:jest.fn()}, lineaTraslado:{updateMany:jest.fn().mockResolvedValue({count:1})} };
+    const tx:any={ traslado:{findFirst:jest.fn().mockResolvedValue(t),updateMany:jest.fn().mockResolvedValue({count:claim})}, $executeRaw:jest.fn().mockResolvedValue(cantidadActualizada), movimientoInventario:{create:jest.fn()}, existenciaLote:{upsert:jest.fn()}, almacen:{count:jest.fn().mockResolvedValue(2)}, lineaTraslado:{findMany:jest.fn().mockResolvedValue(t.lineas),updateMany:jest.fn().mockResolvedValue({count:1})} };
     const prisma:any={$transaction:jest.fn((fn:any)=>fn(tx))};
     return {controller:new TrasladosController(prisma),tx};
   };

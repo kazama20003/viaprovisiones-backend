@@ -23,7 +23,17 @@ export class KardexController {
   if(tipo&&!tipos.includes(tipo)) throw new BadRequestException('Tipo de movimiento inválido.');
   const pagina=q.pagina?Number(q.pagina):1;if(!Number.isInteger(pagina)||pagina<1||pagina>100000)throw new BadRequestException('Página inválida.');
   const where:any={empresaId:s.empresaId,...(productoId?{productoId}:{}),...(loteId?{loteId}:{}),...(almacenId?{almacenId}:{}),...(varianteId?{lote:{varianteId}}:{}),...(tipo?{tipo}:{})};
-  const [total,datos]=await this.prisma.$transaction([this.prisma.movimientoInventario.count({where}),this.prisma.movimientoInventario.findMany({where,orderBy:[{creadoEn:'desc'},{id:'desc'}],skip:(pagina-1)*50,take:50,include:{producto:{select:{nombre:true,sku:true}},lote:{select:{codigo:true,varianteId:true,variante:{select:{sku:true,atributos:true}}}},almacen:{select:{nombre:true}},traslado:{select:{numero:true}}}})]);
+  const [total,datos]=await this.prisma.$transaction(async tx=>{
+   const total=await tx.movimientoInventario.count({where});
+   const movimientos=await tx.movimientoInventario.findMany({where,orderBy:[{creadoEn:'desc'},{id:'desc'}],skip:(pagina-1)*50,take:50});
+   const productos=await tx.producto.findMany({where:{id:{in:movimientos.map(m=>m.productoId)},empresaId:s.empresaId},select:{id:true,nombre:true,sku:true}});
+   const lotes=await tx.lote.findMany({where:{id:{in:movimientos.map(m=>m.loteId)},empresaId:s.empresaId},select:{id:true,codigo:true,varianteId:true}});
+   const variantes=await tx.varianteProducto.findMany({where:{id:{in:lotes.flatMap(l=>l.varianteId?[l.varianteId]:[])},empresaId:s.empresaId},select:{id:true,sku:true,atributos:true}});
+   const almacenes=await tx.almacen.findMany({where:{id:{in:movimientos.map(m=>m.almacenId)},empresaId:s.empresaId},select:{id:true,nombre:true}});
+   const traslados=await tx.traslado.findMany({where:{id:{in:movimientos.flatMap(m=>m.trasladoId?[m.trasladoId]:[])},empresaId:s.empresaId},select:{id:true,numero:true}});
+   const datos=movimientos.map(m=>{const lote=lotes.find(l=>l.id===m.loteId);return {...m,producto:productos.find(p=>p.id===m.productoId),lote:lote?{...lote,variante:variantes.find(v=>v.id===lote.varianteId)||null}:null,almacen:almacenes.find(a=>a.id===m.almacenId),traslado:traslados.find(t=>t.id===m.trasladoId)||null};});
+   return [total,datos] as const;
+  },{isolationLevel:'RepeatableRead'});
   return {datos:datos.map(m=>({...m,cantidad:Number(m.cantidad),costoUnitario:m.costoUnitario===null?null:Number(m.costoUnitario)})),pagina,total};
  }
  @Get('conteos') @RequierePermisos('catalogo.productos.leer')

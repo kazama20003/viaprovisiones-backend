@@ -2,6 +2,7 @@ import { BadRequestException, Controller, Get, Logger, NotFoundException, Param,
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Storage } from '@google-cloud/storage';
 import { randomUUID } from 'node:crypto';
+import { Readable, pipeline } from 'node:stream';
 import type { Request, Response } from 'express';
 import { PrismaService } from '../../../compartido/infraestructura/prisma/prisma.service';
 import { AutenticacionService } from '../../acceso/autenticacion.service';
@@ -113,7 +114,6 @@ export class ArchivosController {
       const sesion = token ? await this.auth.verificarSesion(token) : null;
       if (!sesion || sesion.empresaId !== archivo.empresaId || !sesion.permisos.includes('catalogo.productos.leer')) throw new NotFoundException('No se encontró el archivo.');
     }
-    const file = this.bucket().file(archivo.objeto);
     const range = request.headers.range;
     let start = 0, end = archivo.tamano - 1;
     if (range) {
@@ -121,11 +121,35 @@ export class ArchivosController {
       if (!match || Number(match[1]) >= archivo.tamano) { response.status(416).set('Content-Range', `bytes */${archivo.tamano}`).end(); return; }
       start = Number(match[1]); end = match[2] ? Math.min(Number(match[2]), end) : end;
       if (end < start) { response.status(416).set('Content-Range', `bytes */${archivo.tamano}`).end(); return; }
-      response.status(206).set('Content-Range', `bytes ${start}-${end}/${archivo.tamano}`);
     }
-    response.set({ 'Content-Type': archivo.mime, 'Content-Length': String(end - start + 1), 'Accept-Ranges': 'bytes', 'Cache-Control': publico ? 'public, max-age=300' : 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
-    const stream = file.createReadStream({ start, end });
-    stream.on('error', () => { if (!response.headersSent) response.status(503).end(); else response.destroy(); });
-    stream.pipe(response);
+    const bucket = this.bucket();
+    const abort = new AbortController();
+    const cancelar = () => { if (!response.writableFinished) abort.abort(); };
+    response.once('close', cancelar);
+    try {
+      const client = await bucket.storage.authClient.getClient();
+      const download = await client.request<Readable>({
+        url: `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(archivo.objeto)}`,
+        method: 'GET',
+        params: { alt: 'media' },
+        headers: range ? { Range: `bytes=${start}-${end}` } : undefined,
+        responseType: 'stream',
+        retry: false,
+        signal: abort.signal,
+      });
+      if (response.destroyed) { download.data.destroy(); return; }
+      if (range && download.status !== 206) { download.data.destroy(); throw new Error('Cloud Storage no respetó el rango solicitado.'); }
+      if (range) response.status(206).set('Content-Range', `bytes ${start}-${end}/${archivo.tamano}`);
+      response.set({ 'Content-Type': archivo.mime, 'Content-Length': String(end - start + 1), 'Accept-Ranges': 'bytes', 'Cache-Control': publico ? 'public, max-age=300' : 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
+      pipeline(download.data, response, error => {
+        response.removeListener('close', cancelar);
+        if (error && !abort.signal.aborted) this.logger.error('Error al transmitir un archivo desde Cloud Storage.');
+      });
+    } catch (error) {
+      response.removeListener('close', cancelar);
+      if (response.destroyed || abort.signal.aborted) return;
+      this.logger.error('No se pudo obtener el archivo desde Cloud Storage.');
+      if (!response.headersSent) response.status(503).end(); else response.destroy();
+    }
   }
 }
