@@ -799,6 +799,8 @@ model Pedido {
   promociones      PromocionPedido[]
   vendedorId       String?                @map("vendedor_id") @db.Uuid
   numero           String                 @db.VarChar(30)
+  claveVenta       String?                @map("clave_venta") @db.Uuid
+  hashVenta        String?                @map("hash_venta") @db.VarChar(64)
   canal            CanalPedido
   estado           EstadoPedido           @default(por_pagar)
   estadoPago       EstadoPago             @default(pendiente) @map("estado_pago")
@@ -829,6 +831,7 @@ model Pedido {
   devoluciones     Devolucion[]
 
   @@unique([empresaId, numero])
+  @@unique([empresaId, claveVenta])
   @@unique([id, empresaId])
   @@index([empresaId, estado, creadoEn(sort: Desc)])
   @@index([clienteId, creadoEn(sort: Desc)])
