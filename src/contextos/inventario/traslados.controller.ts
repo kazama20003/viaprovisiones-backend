@@ -12,8 +12,8 @@ export class TrasladosController {
   constructor(private readonly prisma:PrismaService) {}
   @Get() @RequierePermisos('catalogo.productos.leer')
   async listar(@SesionActual() s:ContextoAutenticado) {
-    const datos=await this.prisma.traslado.findMany({where:{empresaId:s.empresaId},orderBy:{creadoEn:'desc'},take:100,include:{movimientos:{where:{tipo:'traslado_entrada'},orderBy:{creadoEn:'desc'},select:{id:true,loteId:true,cantidad:true,creadoEn:true,usuarioId:true}},almacenOrigen:{select:{id:true,nombre:true}},almacenDestino:{select:{id:true,nombre:true}},lineas:{include:{producto:{select:{nombre:true,sku:true}},lote:{select:{codigo:true,variante:{select:{atributos:true,sku:true}}}}}}}});
-    return {datos:datos.map(t=>({...t,movimientos:t.movimientos.map(m=>({...m,cantidad:Number(m.cantidad)})),lineas:t.lineas.map(l=>({...l,cantidadEnviada:Number(l.cantidadEnviada),cantidadRecibida:Number(l.cantidadRecibida)}))}))};
+    const datos=await this.prisma.traslado.findMany({where:{empresaId:s.empresaId},orderBy:{creadoEn:'desc'},take:100,include:{movimientos:{where:{tipo:'traslado_entrada'},orderBy:{creadoEn:'desc'},select:{id:true,loteId:true,almacenId:true,cantidad:true,creadoEn:true,usuarioId:true}},almacenOrigen:{select:{id:true,nombre:true}},almacenDestino:{select:{id:true,nombre:true}},lineas:{include:{resoluciones:{orderBy:{creadaEn:'desc'},include:{usuario:{select:{nombre:true}}}},producto:{select:{nombre:true,sku:true}},lote:{select:{codigo:true,variante:{select:{atributos:true,sku:true}}}}}}}});
+    return {datos:datos.map(t=>({...t,movimientos:t.movimientos.map(m=>({...m,cantidad:Number(m.cantidad)})),lineas:t.lineas.map(l=>({...l,cantidadEnviada:Number(l.cantidadEnviada),cantidadRecibida:Number(l.cantidadRecibida),resoluciones:l.resoluciones.map(r=>({...r,cantidad:Number(r.cantidad)}))}))}))};
   }
   @Post() @RequierePermisos('catalogo.productos.editar')
   async crear(@SesionActual() s:ContextoAutenticado,@Body() b:Record<string,unknown>) {
@@ -76,6 +76,31 @@ export class TrasladosController {
       if(!updated.count) throw new ConflictException('El traslado ya cambió de estado.');
       return {datos:{id,estado:'recibido'}};
     });
+  }
+  @Post(':id/resolver-diferencia') @RequierePermisos('catalogo.productos.editar')
+  async resolverDiferencia(@SesionActual() s:ContextoAutenticado,@Param('id',ParseUUIDPipe) id:string,@Body() b:Record<string,unknown>) {
+    const {lineaId,tipo,cantidad,claveIdempotencia}=b;const motivo=typeof b.motivo==='string'?b.motivo.trim():'';
+    if(!uuid(lineaId)||!uuid(claveIdempotencia)||!['destino','origen','perdida','dano'].includes(String(tipo))||!cantidadValida(cantidad)||!motivo||motivo.length>250)throw new BadRequestException('Indica línea, resultado, cantidad y motivo válidos.');
+    try{return await this.transaccion(async tx=>{
+      const previo=await tx.resolucionDiferenciaTraslado.findFirst({where:{empresaId:s.empresaId,claveIdempotencia}});
+      if(previo){const pl=await tx.lineaTraslado.findFirst({where:{id:previo.lineaTrasladoId,trasladoId:id}});if(!pl||previo.lineaTrasladoId!==lineaId||previo.tipo!==tipo||Number(previo.cantidad)!==cantidad||previo.motivo!==motivo)throw new ConflictException('La clave corresponde a otra operación.');return {datos:{id:previo.id,repetida:true}};}
+      const traslado=await tx.traslado.findFirst({where:{id,empresaId:s.empresaId}});if(!traslado)throw new NotFoundException('Traslado no encontrado.');
+      if(traslado.estado!=='recibido'||!traslado.motivoDiferencia)throw new BadRequestException('Solo se pueden resolver faltantes de traslados cerrados con diferencia.');
+      const linea=await tx.lineaTraslado.findFirst({where:{id:lineaId,trasladoId:id},include:{lote:{select:{costoUnitario:true}}}});if(!linea)throw new BadRequestException('La línea no pertenece al traslado.');
+      const res=await tx.resolucionDiferenciaTraslado.aggregate({where:{empresaId:s.empresaId,lineaTrasladoId:linea.id,tipo:{in:['origen','perdida','dano']}},_sum:{cantidad:true}});
+      const restante=Math.round(Number(linea.cantidadEnviada)*1000)-Math.round(Number(linea.cantidadRecibida)*1000)-Math.round(Number(res._sum.cantidad||0)*1000);
+      if(Math.round(cantidad*1000)>restante)throw new BadRequestException('La cantidad supera el faltante pendiente de resolver.');
+      const claimed=await tx.lineaTraslado.updateMany({where:{id:linea.id,trasladoId:id,cantidadRecibida:linea.cantidadRecibida},data:tipo==='destino'?{cantidadRecibida:{increment:cantidad}}:{cantidadRecibida:linea.cantidadRecibida}});if(!claimed.count)throw new ConflictException('La diferencia cambió. Actualiza y vuelve a intentarlo.');
+      let movimientoId:string|null=null;
+      if(tipo==='destino'||tipo==='origen'){
+        const almacenId=tipo==='destino'?traslado.almacenDestinoId:traslado.almacenOrigenId;
+        if(!await tx.almacen.findFirst({where:{id:almacenId,empresaId:s.empresaId,activo:true}}))throw new BadRequestException('La ubicación correspondiente está inactiva.');
+        await tx.existenciaLote.upsert({where:{loteId_almacenId:{loteId:linea.loteId,almacenId}},create:{empresaId:s.empresaId,loteId:linea.loteId,almacenId,cantidadFisica:cantidad},update:{cantidadFisica:{increment:cantidad}}});
+        const movimiento=await tx.movimientoInventario.create({data:{empresaId:s.empresaId,productoId:linea.productoId,loteId:linea.loteId,almacenId,tipo:'traslado_entrada',sentido:'entrada',cantidad,costoUnitario:linea.lote.costoUnitario,usuarioId:s.usuarioId,trasladoId:id,motivo:(tipo==='destino'?'Llegada posterior: ':'Retorno a origen: ')+motivo.slice(0,220)}});movimientoId=movimiento.id;
+      }
+      const registro=await tx.resolucionDiferenciaTraslado.create({data:{empresaId:s.empresaId,lineaTrasladoId:linea.id,usuarioId:s.usuarioId,claveIdempotencia,tipo:String(tipo),cantidad,motivo,movimientoId}});
+      return {datos:{id:registro.id,repetida:false}};
+    });}catch(e){if((e as {code?:string}).code==='P2002')throw new ConflictException('La operación se registró simultáneamente. Actualiza y vuelve a intentarlo.');throw e;}
   }
   @Post(':id/cancelar') @RequierePermisos('catalogo.productos.editar')
   async cancelar(@SesionActual() s:ContextoAutenticado,@Param('id',ParseUUIDPipe) id:string) { const r=await this.prisma.traslado.updateMany({where:{id,empresaId:s.empresaId,estado:'preparando'},data:{estado:'cancelado'}}); if(!r.count) throw new BadRequestException('Solo puedes cancelar un traslado en preparación.'); return {datos:{id,estado:'cancelado'}}; }

@@ -218,6 +218,7 @@ model Empresa {
   recepcionesCompra    RecepcionCompra[]
   detallesRecepcion    DetalleRecepcion[]
   devolucionesProveedor DevolucionProveedor[]
+  resolucionesTraslado ResolucionDiferenciaTraslado[]
   notasCreditoProveedor NotaCreditoProveedor[]
   lotes                Lote[]
   cotizaciones         Cotizacion[]
@@ -274,6 +275,7 @@ model Usuario {
   movimientosInventario     MovimientoInventario[]
   conteosInventario         ConteoInventario[]
   devolucionesProveedor     DevolucionProveedor[]
+  resolucionesTraslado      ResolucionDiferenciaTraslado[]
   notasCreditoProveedor     NotaCreditoProveedor[]
   trasladosCreados          Traslado[]                 @relation("TrasladoCreador")
   trasladosRecibidos        Traslado[]                 @relation("TrasladoReceptor")
@@ -1065,6 +1067,7 @@ model MovimientoInventario {
   reversiones           MovimientoInventario[]   @relation("ReversionInventario")
   traslado              Traslado?                @relation(fields: [trasladoId], references: [id])
   devolucionProveedor   DevolucionProveedor?
+  resolucionTraslado    ResolucionDiferenciaTraslado?
 
   @@unique([empresaId, claveIdempotencia])
   @@index([loteId, creadoEn])
@@ -1128,6 +1131,7 @@ model LineaTraslado {
   traslado         Traslado @relation(fields: [trasladoId], references: [id], onDelete: Cascade)
   producto         Producto @relation(fields: [productoId], references: [id])
   lote             Lote     @relation(fields: [loteId], references: [id])
+  resoluciones     ResolucionDiferenciaTraslado[]
 
   @@map("lineas_traslado")
 }
@@ -1425,4 +1429,23 @@ model NotaCreditoProveedor {
   @@unique([empresaId, claveIdempotencia])
   @@index([empresaId, cuentaPorPagarId])
   @@map("notas_credito_proveedor")
+}
+model ResolucionDiferenciaTraslado {
+  id                String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  empresaId         String @map("empresa_id") @db.Uuid
+  lineaTrasladoId   String @map("linea_traslado_id") @db.Uuid
+  usuarioId         String @map("usuario_id") @db.Uuid
+  movimientoId      String? @unique @map("movimiento_id") @db.Uuid
+  claveIdempotencia String @map("clave_idempotencia") @db.Uuid
+  tipo              String @db.VarChar(20)
+  cantidad          Decimal @db.Decimal(14,3)
+  motivo            String @db.VarChar(250)
+  creadaEn          DateTime @default(now()) @map("creada_en") @db.Timestamptz(6)
+  empresa           Empresa @relation(fields:[empresaId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  linea             LineaTraslado @relation(fields:[lineaTrasladoId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  usuario           Usuario @relation(fields:[usuarioId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  movimiento        MovimientoInventario? @relation(fields:[movimientoId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  @@unique([empresaId, claveIdempotencia])
+  @@index([empresaId, lineaTrasladoId])
+  @@map("resoluciones_diferencia_traslado")
 }
