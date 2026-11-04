@@ -218,6 +218,7 @@ model Empresa {
   recepcionesCompra    RecepcionCompra[]
   detallesRecepcion    DetalleRecepcion[]
   devolucionesProveedor DevolucionProveedor[]
+  notasCreditoProveedor NotaCreditoProveedor[]
   lotes                Lote[]
   cotizaciones         Cotizacion[]
   pedidos              Pedido[]
@@ -273,6 +274,7 @@ model Usuario {
   movimientosInventario     MovimientoInventario[]
   conteosInventario         ConteoInventario[]
   devolucionesProveedor     DevolucionProveedor[]
+  notasCreditoProveedor     NotaCreditoProveedor[]
   trasladosCreados          Traslado[]                 @relation("TrasladoCreador")
   trasladosRecibidos        Traslado[]                 @relation("TrasladoReceptor")
   devolucionesCreadas       Devolucion[]
@@ -388,6 +390,7 @@ model Proveedor {
   ordenesCompra     OrdenCompra[]
   lotes             Lote[]
   cuentasPorPagar   CuentaPorPagar[]
+  notasCredito      NotaCreditoProveedor[]
 
   @@unique([empresaId, tipoDocumento, numeroDocumento])
   @@unique([id, empresaId])
@@ -905,6 +908,7 @@ model CuentaPorPagar {
   ordenCompra      OrdenCompra     @relation(fields: [ordenCompraId], references: [id])
   proveedor        Proveedor       @relation(fields: [proveedorId], references: [id])
   pagos            PagoProveedor[]
+  notasCredito     NotaCreditoProveedor[]
 
   @@unique([id, empresaId])
   @@index([empresaId, estado, fechaVencimiento])
@@ -997,12 +1001,14 @@ model PagoProveedor {
   medioPago            String         @map("medio_pago") @db.VarChar(30)
   medioPagoId          String?        @map("medio_pago_id") @db.Uuid
   referencia           String?        @db.VarChar(120)
+  claveIdempotencia    String?        @map("clave_idempotencia") @db.Uuid
   pagadoEn             DateTime       @default(now()) @map("pagado_en") @db.Timestamptz(6)
   cuentaPorPagar       CuentaPorPagar @relation(fields: [cuentaPorPagarId], references: [id])
   registradoPor        Usuario        @relation(fields: [registradoPorId], references: [id])
   medioPagoConfigurado MedioPago?     @relation(fields: [medioPagoId], references: [id])
 
   @@map("pagos_proveedores")
+  @@unique([empresaId, claveIdempotencia])
 }
 
 model MovimientoCaja {
@@ -1393,7 +1399,30 @@ model DevolucionProveedor {
   almacen              Almacen @relation(fields: [almacenId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   usuario              Usuario @relation(fields: [usuarioId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   movimiento           MovimientoInventario @relation(fields: [movimientoId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  notasCredito         NotaCreditoProveedor[]
   @@unique([empresaId, numero])
   @@index([empresaId, detalleRecepcionId])
   @@map("devoluciones_proveedor")
+}
+model NotaCreditoProveedor {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  empresaId             String   @map("empresa_id") @db.Uuid
+  cuentaPorPagarId      String   @map("cuenta_por_pagar_id") @db.Uuid
+  devolucionProveedorId String   @map("devolucion_proveedor_id") @db.Uuid
+  proveedorId           String   @map("proveedor_id") @db.Uuid
+  usuarioId             String   @map("usuario_id") @db.Uuid
+  numero                String   @db.VarChar(80)
+  fechaEmision          DateTime @map("fecha_emision") @db.Date
+  monto                 Decimal  @db.Decimal(14, 2)
+  claveIdempotencia     String   @map("clave_idempotencia") @db.Uuid
+  creadaEn              DateTime @default(now()) @map("creada_en") @db.Timestamptz(6)
+  empresa               Empresa @relation(fields:[empresaId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  cuenta                CuentaPorPagar @relation(fields:[cuentaPorPagarId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  devolucion            DevolucionProveedor @relation(fields:[devolucionProveedorId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  proveedor             Proveedor @relation(fields:[proveedorId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  usuario               Usuario @relation(fields:[usuarioId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+  @@unique([empresaId, proveedorId, numero])
+  @@unique([empresaId, claveIdempotencia])
+  @@index([empresaId, cuentaPorPagarId])
+  @@map("notas_credito_proveedor")
 }
