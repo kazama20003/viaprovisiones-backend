@@ -925,6 +925,7 @@ model SesionCaja {
   id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   empresaId           String           @map("empresa_id") @db.Uuid
   almacenId           String           @map("almacen_id") @db.Uuid
+  nombreCaja          String           @default("Caja principal") @map("nombre_caja") @db.VarChar(80)
   usuarioAperturaId   String           @map("usuario_apertura_id") @db.Uuid
   usuarioCierreId     String?          @map("usuario_cierre_id") @db.Uuid
   estado              EstadoSesionCaja @default(abierta)
@@ -1029,6 +1030,7 @@ model MovimientoCaja {
   monto           Decimal            @db.Decimal(14, 2)
   sentido         SentidoMovimiento
   descripcion     String             @db.VarChar(250)
+  claveOperacion  String?            @map("clave_operacion") @db.Uuid
   creadoEn        DateTime           @default(now()) @map("creado_en") @db.Timestamptz(6)
   empresa         Empresa            @relation(fields: [empresaId], references: [id])
   sesionCaja      SesionCaja         @relation(fields: [sesionCajaId], references: [id])
@@ -1036,6 +1038,7 @@ model MovimientoCaja {
   cobro           Cobro?             @relation(fields: [cobroId], references: [id])
   gasto           Gasto?             @relation(fields: [gastoId], references: [id])
 
+  @@unique([empresaId, claveOperacion])
   @@index([sesionCajaId, creadoEn])
   @@map("movimientos_caja")
 }
@@ -1148,6 +1151,8 @@ model Devolucion {
   numero          String            @db.VarChar(30)
   estado          EstadoDevolucion  @default(solicitada)
   motivo          String
+  claveOperacion  String?           @map("clave_operacion") @db.Uuid
+  hashOperacion   String?           @map("hash_operacion") @db.VarChar(64)
   creadaEn        DateTime          @default(now()) @map("creada_en") @db.Timestamptz(6)
   empresa         Empresa           @relation(fields: [empresaId], references: [id])
   pedido          Pedido            @relation(fields: [pedidoId], references: [id])
@@ -1155,6 +1160,7 @@ model Devolucion {
   lineas          LineaDevolucion[]
 
   @@unique([empresaId, numero])
+  @@unique([empresaId, claveOperacion])
   @@map("devoluciones")
 }
 
