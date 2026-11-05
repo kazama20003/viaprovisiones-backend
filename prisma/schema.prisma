@@ -226,6 +226,7 @@ model Empresa {
   comprobantes         Comprobante[]
   cuentasPorCobrar     CuentaPorCobrar[]
   cuentasPorPagar      CuentaPorPagar[]
+  cajasRegistradas     CajaRegistrada[]
   sesionesCaja         SesionCaja[]
   gastos               Gasto[]
   cobros               Cobro[]
@@ -594,6 +595,7 @@ model Almacen {
   sucursal          Sucursal?              @relation(fields: [sucursalId, empresaId], references: [id, empresaId], onDelete: Restrict)
   existencias       ExistenciaLote[]
   detallesRecepcion DetalleRecepcion[]
+  cajasRegistradas  CajaRegistrada[]
   sesionesCaja      SesionCaja[]
   trasladosOrigen   Traslado[]             @relation("AlmacenOrigen")
   trasladosDestino  Traslado[]             @relation("AlmacenDestino")
@@ -921,10 +923,25 @@ model CuentaPorPagar {
   @@map("cuentas_por_pagar")
 }
 
+model CajaRegistrada {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  empresaId String @map("empresa_id") @db.Uuid
+  almacenId String @map("almacen_id") @db.Uuid
+  nombre String @db.VarChar(80)
+  activa Boolean @default(true)
+  empresa Empresa @relation(fields: [empresaId], references: [id])
+  almacen Almacen @relation(fields: [almacenId], references: [id])
+  sesiones SesionCaja[]
+  @@unique([id, empresaId])
+  @@map("cajas_registradas")
+}
+
 model SesionCaja {
   id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   empresaId           String           @map("empresa_id") @db.Uuid
   almacenId           String           @map("almacen_id") @db.Uuid
+  cajaRegistradaId    String?          @map("caja_registrada_id") @db.Uuid
+  cajaRegistrada      CajaRegistrada?  @relation(fields: [cajaRegistradaId], references: [id])
   nombreCaja          String           @default("Caja principal") @map("nombre_caja") @db.VarChar(80)
   usuarioAperturaId   String           @map("usuario_apertura_id") @db.Uuid
   usuarioCierreId     String?          @map("usuario_cierre_id") @db.Uuid
