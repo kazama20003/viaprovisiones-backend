@@ -45,10 +45,13 @@ export class CatalogoTiendaController {
         },
         precios: {
           where: {
+            listaPrecios: { empresaId, nombre: 'Público', activa: true },
+            varianteId: null,
+            cantidadMinima: { lte: 1 },
             vigenteDesde: { lte: new Date() },
             OR: [{ vigenteHasta: null }, { vigenteHasta: { gt: new Date() } }],
           },
-          orderBy: [{ cantidadMinima: 'asc' }, { vigenteDesde: 'desc' }],
+          orderBy: [{ cantidadMinima: 'desc' }, { vigenteDesde: 'desc' }],
           take: 1,
           select: { precioUnitario: true },
         },
@@ -65,7 +68,7 @@ export class CatalogoTiendaController {
     });
 
     return {
-      datos: productos.map((producto) => ({
+      datos: productos.filter((producto) => producto.precios.length > 0).map((producto) => ({
         id: producto.id,
         sku: producto.sku,
         nombre: producto.nombre,
@@ -102,16 +105,19 @@ export class CatalogoTiendaController {
         imagenes: { orderBy: { posicion: 'asc' } },
         precios: {
           where: {
+            listaPrecios: { empresaId, nombre: 'Público', activa: true },
+            varianteId: null,
+            cantidadMinima: { lte: 1 },
             vigenteDesde: { lte: new Date() },
             OR: [{ vigenteHasta: null }, { vigenteHasta: { gt: new Date() } }],
           },
-          orderBy: [{ cantidadMinima: 'asc' }, { vigenteDesde: 'desc' }],
+          orderBy: [{ cantidadMinima: 'desc' }, { vigenteDesde: 'desc' }],
         },
         variantes: { where: { activa: true }, orderBy: { sku: 'asc' }, select: { id: true, sku: true, atributos: true, precioPublico: true, lotes: { where: { estado: 'disponible', empresaId }, select: { existencias: { where: { empresaId }, select: { cantidadFisica: true, cantidadReservada: true } } } } } },
       },
     });
 
-    if (!producto) throw new NotFoundException('No se encontró el producto.');
+    if (!producto || producto.precios.length === 0) throw new NotFoundException('No se encontró el producto.');
 
     return {
       datos: {
