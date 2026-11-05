@@ -597,6 +597,7 @@ model Almacen {
   existencias       ExistenciaLote[]
   detallesRecepcion DetalleRecepcion[]
   cajasRegistradas  CajaRegistrada[]
+  gastos            Gasto[]
   sesionesCaja      SesionCaja[]
   trasladosOrigen   Traslado[]             @relation("AlmacenOrigen")
   trasladosDestino  Traslado[]             @relation("AlmacenDestino")
@@ -979,6 +980,9 @@ model SesionCaja {
 }
 
 model Gasto {
+  almacenId            String?         @map("almacen_id") @db.Uuid
+  almacen              Almacen?        @relation(fields: [almacenId], references: [id])
+  claveOperacion       String?         @map("clave_operacion") @db.Uuid
   id                   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   empresaId            String          @map("empresa_id") @db.Uuid
   sesionCajaId         String?         @map("sesion_caja_id") @db.Uuid
@@ -1000,6 +1004,7 @@ model Gasto {
   movimientoCaja       MovimientoCaja?
 
   @@index([empresaId, fecha(sort: Desc)])
+  @@unique([empresaId, claveOperacion])
   @@map("gastos")
 }
 
