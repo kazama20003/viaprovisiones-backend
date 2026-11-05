@@ -263,6 +263,7 @@ model Usuario {
   ultimoAccesoEn            DateTime?                  @map("ultimo_acceso_en") @db.Timestamptz(6)
   creadoEn                  DateTime                   @default(now()) @map("creado_en") @db.Timestamptz(6)
   empresa                   Empresa                    @relation(fields: [empresaId], references: [id])
+  permisosCaja              PermisoCajaUsuario?
   roles                     UsuarioRol[]
   ordenesCreadas            OrdenCompra[]              @relation("OrdenCompraCreador")
   recepcionesRegistradas    RecepcionCompra[]          @relation("RecepcionRegistrador")
@@ -921,6 +922,18 @@ model CuentaPorPagar {
   @@unique([id, empresaId])
   @@index([empresaId, estado, fechaVencimiento])
   @@map("cuentas_por_pagar")
+}
+
+model PermisoCajaUsuario {
+  usuarioId String @id @map("usuario_id") @db.Uuid
+  empresaId String @map("empresa_id") @db.Uuid
+  abrir Boolean @default(false)
+  cerrar Boolean @default(false)
+  retiros Boolean @default(false)
+  anular Boolean @default(false)
+  devoluciones Boolean @default(false)
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  @@map("permisos_caja_usuario")
 }
 
 model CajaRegistrada {

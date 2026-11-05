@@ -1,0 +1,1 @@
+CREATE TABLE "permisos_caja_usuario" ("usuario_id" UUID PRIMARY KEY REFERENCES "usuarios"("id") ON DELETE CASCADE, "empresa_id" UUID NOT NULL REFERENCES "empresas"("id"), "abrir" BOOLEAN NOT NULL DEFAULT false, "cerrar" BOOLEAN NOT NULL DEFAULT false, "retiros" BOOLEAN NOT NULL DEFAULT false, "anular" BOOLEAN NOT NULL DEFAULT false, "devoluciones" BOOLEAN NOT NULL DEFAULT false);
