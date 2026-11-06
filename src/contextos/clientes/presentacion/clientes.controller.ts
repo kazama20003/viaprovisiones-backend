@@ -24,9 +24,9 @@ export class ClientesController {
       },
       orderBy: { creadoEn: 'desc' },
       take: 100,
-      select: { id: true, tipoDocumento: true, numeroDocumento: true, tipoCliente: true, nombre: true, razonSocial: true, correo: true, telefono: true, limiteCredito: true, condicionPagoDias: true, activo: true, creadoEn: true },
+      select: { id: true, tipoDocumento: true, numeroDocumento: true, tipoCliente: true, nombre: true, razonSocial: true, correo: true, telefono: true, limiteCredito: true, condicionPagoDias: true, activo: true, creadoEn: true, pedidos:{where:{estado:{in:['pagado','preparando','enviado','entregado']},...(sesion.permisos.includes('ventas.pedidos.leer')?{}:{id:'00000000-0000-0000-0000-000000000000'})},orderBy:{creadoEn:'desc'},select:{id:true,numero:true,estado:true,creadoEn:true,total:true,devoluciones:{where:{estado:'reembolsada'},select:{lineas:{select:{montoReembolsado:true}}}}}} },
     });
-    return { datos: clientes.map((cliente) => ({ ...cliente, limiteCredito: Number(cliente.limiteCredito) })) };
+    return { datos: clientes.map((cliente) => ({ ...cliente, puedeVerCompras:sesion.permisos.includes('ventas.pedidos.leer'), limiteCredito: Number(cliente.limiteCredito), pedidos:cliente.pedidos.map(p=>({...p,total:Number(p.total),devuelto:p.devoluciones.flatMap(d=>d.lineas).reduce((n,l)=>n+Number(l.montoReembolsado),0),devoluciones:undefined})) })) };
   }
 
   @Post()
