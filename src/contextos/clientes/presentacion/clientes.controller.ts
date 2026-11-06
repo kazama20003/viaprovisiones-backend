@@ -26,7 +26,9 @@ export class ClientesController {
       take: 100,
       select: { id: true, tipoDocumento: true, numeroDocumento: true, tipoCliente: true, nombre: true, razonSocial: true, correo: true, telefono: true, limiteCredito: true, condicionPagoDias: true, activo: true, creadoEn: true, pedidos:{where:{estado:{in:['pagado','preparando','enviado','entregado']},...(sesion.permisos.includes('ventas.pedidos.leer')?{}:{id:'00000000-0000-0000-0000-000000000000'})},orderBy:{creadoEn:'desc'},select:{id:true,numero:true,estado:true,creadoEn:true,total:true,devoluciones:{where:{estado:'reembolsada'},select:{lineas:{select:{montoReembolsado:true}}}}}} },
     });
-    return { datos: clientes.map((cliente) => ({ ...cliente, puedeVerCompras:sesion.permisos.includes('ventas.pedidos.leer'), limiteCredito: Number(cliente.limiteCredito), pedidos:cliente.pedidos.map(p=>({...p,total:Number(p.total),devuelto:p.devoluciones.flatMap(d=>d.lineas).reduce((n,l)=>n+Number(l.montoReembolsado),0),devoluciones:undefined})) })) };
+    const puedeVerCompras = sesion.permisos.includes('ventas.pedidos.leer');
+    const cotizaciones = puedeVerCompras ? await this.prisma.cotizacion.findMany({ where: { empresaId: sesion.empresaId, clienteId: { in: clientes.map(c => c.id) } }, orderBy: { creadaEn: 'desc' }, select: { id: true, clienteId: true, numero: true, estado: true, total: true, creadaEn: true } }) : [];
+    return { datos: clientes.map((cliente) => ({ ...cliente, puedeVerCompras, cotizaciones: cotizaciones.filter(c => c.clienteId === cliente.id).slice(0, 5).map(c => ({ ...c, total: Number(c.total) })), limiteCredito: Number(cliente.limiteCredito), pedidos:cliente.pedidos.map(p=>({...p,total:Number(p.total),devuelto:p.devoluciones.flatMap(d=>d.lineas).reduce((n,l)=>n+Number(l.montoReembolsado),0),devoluciones:undefined})) })) };
   }
 
   @Post()
