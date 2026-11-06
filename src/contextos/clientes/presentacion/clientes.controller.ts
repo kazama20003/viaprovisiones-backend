@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { PrismaService } from '../../../compartido/infraestructura/prisma/prisma.service';
 import { PermisoGuard, RequierePermisos, SesionActual, SesionGuard } from '../../acceso/sesion.guard';
 import type { ContextoAutenticado } from '../../acceso/sesion.guard';
@@ -39,11 +39,21 @@ export class ClientesController {
     if (typeof tipoCliente !== 'string' || !tiposCliente.includes(tipoCliente as (typeof tiposCliente)[number])) {
       throw new BadRequestException('El tipo de cliente no es válido.');
     }
+    const tipoDocumento = cuerpo.tipoDocumento ?? 'sin_documento';
+    if (typeof tipoDocumento !== 'string' || !['sin_documento','dni','ruc','ce'].includes(tipoDocumento)) throw new BadRequestException('El tipo de documento no es válido.');
+    const numeroDocumento = typeof cuerpo.numeroDocumento === 'string' ? cuerpo.numeroDocumento.trim() : '';
+    if (tipoDocumento === 'dni' && !/^\d{8}$/.test(numeroDocumento)) throw new BadRequestException('El DNI debe tener 8 dígitos.');
+    if (tipoDocumento === 'ruc' && !/^\d{11}$/.test(numeroDocumento)) throw new BadRequestException('El RUC debe tener 11 dígitos.');
+    if (tipoDocumento === 'ce' && (!numeroDocumento || numeroDocumento.length > 20)) throw new BadRequestException('Indica un carné de extranjería válido.');
+    if (tipoDocumento === 'sin_documento' && numeroDocumento) throw new BadRequestException('Selecciona el tipo de documento.');
+    if (typeof cuerpo.correo === 'string' && cuerpo.correo.trim() && (cuerpo.correo.trim().length > 254 || !/^\S+@\S+\.\S+$/.test(cuerpo.correo.trim()))) throw new BadRequestException('El correo no es válido.');
+    if (typeof cuerpo.telefono === 'string' && cuerpo.telefono.trim().length > 30) throw new BadRequestException('El teléfono admite hasta 30 caracteres.');
     const dias = cuerpo.condicionPagoDias ?? 0;
     const limite = Number(cuerpo.limiteCredito ?? 0);
     if (!Number.isInteger(dias) || Number(dias) < 0 || !Number.isFinite(limite) || limite < 0) {
       throw new BadRequestException('El crédito y los días de pago deben ser valores no negativos.');
     }
+    try {
     const cliente = await this.prisma.cliente.create({
       data: {
         empresaId: sesion.empresaId,
@@ -51,14 +61,18 @@ export class ClientesController {
         tipoCliente: tipoCliente as (typeof tiposCliente)[number],
         correo: typeof cuerpo.correo === 'string' ? cuerpo.correo.trim().toLowerCase() : null,
         telefono: typeof cuerpo.telefono === 'string' ? cuerpo.telefono.trim() : null,
-        tipoDocumento: typeof cuerpo.tipoDocumento === 'string' ? cuerpo.tipoDocumento as never : undefined,
-        numeroDocumento: typeof cuerpo.numeroDocumento === 'string' ? cuerpo.numeroDocumento.trim() : null,
+        tipoDocumento: tipoDocumento as 'sin_documento' | 'dni' | 'ruc' | 'ce',
+        numeroDocumento: numeroDocumento || null,
         limiteCredito: limite,
         condicionPagoDias: Number(dias),
       },
       select: { id: true, nombre: true, tipoCliente: true, correo: true, telefono: true, creadoEn: true },
     });
     return { datos: cliente };
+    } catch (error) {
+      if ((error as {code?:string}).code === 'P2002') throw new ConflictException('Ya existe un cliente con ese tipo y número de documento.');
+      throw error;
+    }
   }
   @Patch(':id/credito') @RequierePermisos('clientes.crear')
   async credito(@SesionActual() sesion:ContextoAutenticado,@Param('id',ParseUUIDPipe) id:string,@Body() b:Record<string,unknown>){if(!sesion.roles.includes('Administrador'))throw new ForbiddenException('Solo un administrador puede modificar el crédito.');const limite=b.limiteCredito,dias=b.condicionPagoDias;if(typeof limite!=='number'||!Number.isFinite(limite)||limite<0||limite>999999||Math.abs(limite*100-Math.round(limite*100))>0.000001||typeof dias!=='number'||!Number.isInteger(dias)||dias<0||dias>3650)throw new BadRequestException('Indica límite y plazo válidos.');const c=await this.prisma.cliente.updateMany({where:{id,empresaId:sesion.empresaId,activo:true},data:{limiteCredito:limite,condicionPagoDias:dias}});if(!c.count)throw new NotFoundException('Cliente no encontrado.');return {datos:{id,limiteCredito:limite,condicionPagoDias:dias}};}
