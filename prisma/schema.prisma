@@ -887,6 +887,8 @@ model Comprobante {
 }
 
 model CuentaPorCobrar {
+  sesionCajaVentaId String? @map("sesion_caja_venta_id") @db.Uuid
+  almacenId String? @map("almacen_id") @db.Uuid
   id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   empresaId        String       @map("empresa_id") @db.Uuid
   pedidoId         String       @unique @map("pedido_id") @db.Uuid
@@ -1009,6 +1011,7 @@ model Gasto {
 }
 
 model Cobro {
+  claveOperacion String? @map("clave_operacion") @db.Uuid
   id                   String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   empresaId            String           @map("empresa_id") @db.Uuid
   pedidoId             String           @map("pedido_id") @db.Uuid
@@ -1030,6 +1033,7 @@ model Cobro {
   reembolsos           Reembolso[]
 
   @@unique([id, empresaId])
+  @@unique([empresaId, claveOperacion])
   @@index([pedidoId, recibidoEn])
   @@map("cobros")
 }

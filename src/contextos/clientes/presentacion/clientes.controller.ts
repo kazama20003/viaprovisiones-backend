@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { PrismaService } from '../../../compartido/infraestructura/prisma/prisma.service';
 import { PermisoGuard, RequierePermisos, SesionActual, SesionGuard } from '../../acceso/sesion.guard';
 import type { ContextoAutenticado } from '../../acceso/sesion.guard';
@@ -60,4 +60,7 @@ export class ClientesController {
     });
     return { datos: cliente };
   }
+  @Patch(':id/credito') @RequierePermisos('clientes.crear')
+  async credito(@SesionActual() sesion:ContextoAutenticado,@Param('id',ParseUUIDPipe) id:string,@Body() b:Record<string,unknown>){if(!sesion.roles.includes('Administrador'))throw new ForbiddenException('Solo un administrador puede modificar el crédito.');const limite=b.limiteCredito,dias=b.condicionPagoDias;if(typeof limite!=='number'||!Number.isFinite(limite)||limite<0||limite>999999||Math.abs(limite*100-Math.round(limite*100))>0.000001||typeof dias!=='number'||!Number.isInteger(dias)||dias<0||dias>3650)throw new BadRequestException('Indica límite y plazo válidos.');const c=await this.prisma.cliente.updateMany({where:{id,empresaId:sesion.empresaId,activo:true},data:{limiteCredito:limite,condicionPagoDias:dias}});if(!c.count)throw new NotFoundException('Cliente no encontrado.');return {datos:{id,limiteCredito:limite,condicionPagoDias:dias}};}
+
 }
