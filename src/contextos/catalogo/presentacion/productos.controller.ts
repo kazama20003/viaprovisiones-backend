@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Body,
   Controller,
   Get,
@@ -48,7 +49,7 @@ export class ProductosController {
           orderBy: [{ cantidadMinima: 'asc' }, { vigenteDesde: 'desc' }],
           select: { precioUnitario: true, listaPrecios: { select: { nombre: true } } },
         },
-        variantes: { where: { activa: true }, select: { id: true, sku: true, atributos: true, precioPublico: true, lotes: { where: { estado: 'disponible' }, select: { existencias: { select: { cantidadFisica: true, cantidadReservada: true } } } } } },
+        variantes: { where: { activa: true }, select: { id: true, sku: true, codigoBarras: true, atributos: true, precioPublico: true, lotes: { where: { estado: 'disponible' }, select: { existencias: { select: { cantidadFisica: true, cantidadReservada: true } } } } } },
         historial: { orderBy: { creadoEn: 'desc' }, take: 20, select: { accion: true, creadoEn: true } },
         lotes: {
           select: {
@@ -94,7 +95,9 @@ export class ProductosController {
     const extras = this.campos(cuerpo);
     if (typeof extras.marca === 'string' && extras.marca) await this.comprobarMarca(sesion.empresaId, extras.marca);
     const producto = await this.prisma.$transaction(async tx => {
+      await this.bloquearCodigos(tx, sesion.empresaId);
       const sku = await this.siguienteSku(tx, sesion.empresaId);
+      if (typeof extras.codigoBarras === 'string') await this.validarCodigo(tx, sesion.empresaId, extras.codigoBarras, null, null, sku);
       const categoria = await this.guardarCategoria(tx, sesion.empresaId, cuerpo.categoriaNombre);
       const creado = await tx.producto.create({ data: {
         empresaId: sesion.empresaId,
@@ -105,7 +108,7 @@ export class ProductosController {
         ...extras,
       }, select: { id: true, sku: true, nombre: true, estado: true, creadoEn: true } });
       await this.guardarPrecios(tx, sesion.empresaId, creado.id, cuerpo.precios);
-      await this.guardarVariantes(tx, sesion.empresaId, creado.id, sku, cuerpo.datosAdicionales, cuerpo.preciosVariantes);
+      await this.guardarVariantes(tx, sesion.empresaId, creado.id, sku, cuerpo.datosAdicionales, cuerpo.preciosVariantes, cuerpo.codigosVariantes);
       await tx.historialProducto.create({ data: { empresaId: sesion.empresaId, productoId: creado.id, usuarioId: sesion.usuarioId, accion: 'Producto creado' } });
       return creado;
     });
@@ -149,11 +152,13 @@ export class ProductosController {
     }
     if (Object.keys(data).length === 0 && !('precios' in cuerpo)) throw new BadRequestException('No se recibieron campos para actualizar.');
     const producto = await this.prisma.$transaction(async tx => {
+      await this.bloquearCodigos(tx, sesion.empresaId);
+      if (typeof data.codigoBarras === 'string') await this.validarCodigo(tx, sesion.empresaId, data.codigoBarras, id, null, actual.sku);
       const categoria = await this.guardarCategoria(tx, sesion.empresaId, cuerpo.categoriaNombre);
       if (categoria !== undefined) data.categoriaId = categoria;
       const actualizado = await tx.producto.update({ where: { id }, data, select: { id: true, sku: true, nombre: true, estado: true, visibleEnTienda: true } });
       await this.guardarPrecios(tx, sesion.empresaId, id, cuerpo.precios);
-      await this.guardarVariantes(tx, sesion.empresaId, id, actualizado.sku, cuerpo.datosAdicionales, cuerpo.preciosVariantes);
+      await this.guardarVariantes(tx, sesion.empresaId, id, actualizado.sku, cuerpo.datosAdicionales, cuerpo.preciosVariantes, cuerpo.codigosVariantes);
       await tx.historialProducto.create({ data: { empresaId: sesion.empresaId, productoId: id, usuarioId: sesion.usuarioId, accion: 'Producto actualizado' } });
       return actualizado;
     }, { isolationLevel: 'Serializable' });
@@ -216,23 +221,39 @@ export class ProductosController {
     return categoria.id;
   }
 
+  private async bloquearCodigos(tx: Prisma.TransactionClient, empresaId: string) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${'codigos-productos:' + empresaId}, 0))`;
+  }
+
+  private async validarCodigo(tx: Prisma.TransactionClient, empresaId: string, codigo: string, productoId: string | null, varianteId: string | null, skuPropio: string) {
+    if (!codigo) return;
+    const match = { equals: codigo, mode: 'insensitive' as const };
+    const p = await tx.producto.findFirst({ where: { empresaId, OR: [{ codigoBarras: match }, { sku: match }], ...(productoId ? { id: { not: productoId } } : {}) }, select: { id: true } });
+    const v = await tx.varianteProducto.findFirst({ where: { empresaId, OR: [{ codigoBarras: match }, { sku: match }], ...(varianteId ? { id: { not: varianteId } } : {}) }, select: { id: true } });
+    if (p || v || (codigo.toLowerCase() === skuPropio.toLowerCase() && varianteId !== null)) throw new ConflictException('Este código ya está asignado a otro producto o variante.');
+  }
+
   private async siguienteSku(tx: Prisma.TransactionClient, empresaId: string) {
     for (;;) {
       const filas = await tx.$queryRaw<{ ultimo_numero: bigint }[]>`INSERT INTO contadores_sku (empresa_id, ultimo_numero) VALUES (${empresaId}::uuid, 1) ON CONFLICT (empresa_id) DO UPDATE SET ultimo_numero = contadores_sku.ultimo_numero + 1 RETURNING ultimo_numero`;
       const numero = filas[0].ultimo_numero;
       if (numero > 999999999999n) throw new BadRequestException('Se agotaron los códigos de producto disponibles.');
       const codigo = `VIA-${numero.toString().padStart(6, '0')}`;
-      if (!await tx.producto.findFirst({ where: { empresaId, sku: codigo }, select: { id: true } }) && !await tx.varianteProducto.findFirst({ where: { empresaId, sku: codigo }, select: { id: true } })) return codigo;
+      const match = {equals: codigo, mode: 'insensitive' as const};
+      if (!await tx.producto.findFirst({ where: { empresaId, OR: [{sku: match}, {codigoBarras: match}] }, select: { id: true } }) && !await tx.varianteProducto.findFirst({ where: { empresaId, OR: [{sku: match}, {codigoBarras: match}] }, select: { id: true } })) return codigo;
     }
   }
 
-  private async guardarVariantes(tx: Prisma.TransactionClient, empresaId: string, productoId: string, sku: string, details: unknown, precios: unknown) {
+  private async guardarVariantes(tx: Prisma.TransactionClient, empresaId: string, productoId: string, sku: string, details: unknown, precios: unknown, codigos: unknown) {
     if (!details || typeof details !== 'object') return;
     const combinaciones = combinacionesVariantes(details as Record<string, unknown>);
     if (precios !== undefined && (!precios || typeof precios !== 'object' || Array.isArray(precios))) throw new BadRequestException('Los precios de variantes no son válidos.');
     const tablaPrecios = (precios || {}) as Record<string, unknown>;
+    if (codigos !== undefined && (!codigos || typeof codigos !== 'object' || Array.isArray(codigos))) throw new BadRequestException('Los códigos de variantes no son válidos.');
+    const tablaCodigos = (codigos || {}) as Record<string, unknown>;
     const claves = new Set(combinaciones.map(claveVariante));
     for (const [clave, valor] of Object.entries(tablaPrecios)) if (!claves.has(clave) || (valor !== null && (typeof valor !== 'number' || !Number.isFinite(valor) || valor < 0))) throw new BadRequestException('El precio de una variante no es válido.');
+    for (const [clave, valor] of Object.entries(tablaCodigos)) if (!claves.has(clave) || (valor !== null && (typeof valor !== 'string' || valor.trim().length > 80))) throw new BadRequestException('El código de una variante no es válido.');
     const existentes = await tx.varianteProducto.findMany({ where: { empresaId, productoId }, include: { lotes: { select: { existencias: { select: { cantidadFisica: true } } } } } });
     const eliminadasConStock = existentes.some(v => v.activa && !claves.has(claveVariante(v.atributos as Record<string, string>)) && v.lotes.some(l => l.existencias.some(e => Number(e.cantidadFisica) > 0)));
     if (eliminadasConStock) throw new BadRequestException('No se puede quitar una variante que tiene stock. Primero ajusta sus existencias a cero.');
@@ -243,10 +264,12 @@ export class ProductosController {
       const clave = claveVariante(atributos);
       const actual = existentes.find(v => claveVariante(v.atributos as Record<string, string>) === clave);
       const precioPublico = Object.hasOwn(tablaPrecios, clave) ? tablaPrecios[clave] as number | null : undefined;
-      if (actual) { await tx.varianteProducto.update({ where: { id: actual.id }, data: { activa: true, ...(precioPublico !== undefined ? { precioPublico } : {}) } }); activos.push(actual.id); continue; }
+      const codigoProveedor = Object.hasOwn(tablaCodigos, clave) ? this.opcionalTexto(tablaCodigos[clave]) : undefined;
+      if (codigoProveedor) await this.validarCodigo(tx, empresaId, codigoProveedor, null, actual?.id || null, sku);
+      if (actual) { await tx.varianteProducto.update({ where: { id: actual.id }, data: { activa: true, ...(precioPublico !== undefined ? { precioPublico } : {}), ...(codigoProveedor !== undefined ? { codigoBarras: codigoProveedor } : {}) } }); activos.push(actual.id); continue; }
       let codigo: string;
-      do { consecutivo++; if (consecutivo > 99999999) throw new BadRequestException('Se agotaron los códigos de variantes.'); codigo = `${base}-${String(consecutivo).padStart(2, '0')}`; } while (await tx.varianteProducto.findFirst({ where: { empresaId, sku: codigo }, select: { id: true } }) || await tx.producto.findFirst({ where: { empresaId, sku: codigo }, select: { id: true } }));
-      const nueva = await tx.varianteProducto.create({ data: { empresaId, productoId, sku: codigo, atributos, precioPublico } });
+      do { consecutivo++; if (consecutivo > 99999999) throw new BadRequestException('Se agotaron los códigos de variantes.'); codigo = `${base}-${String(consecutivo).padStart(2, '0')}`; const match = {equals:codigo,mode:'insensitive' as const}; if (!await tx.varianteProducto.findFirst({ where: { empresaId, OR:[{sku:match},{codigoBarras:match}] }, select: { id: true } }) && !await tx.producto.findFirst({ where: { empresaId, OR:[{sku:match},{codigoBarras:match}] }, select: { id: true } })) break; } while (true);
+      const nueva = await tx.varianteProducto.create({ data: { empresaId, productoId, sku: codigo, atributos, precioPublico, codigoBarras: codigoProveedor ?? null } });
       activos.push(nueva.id);
     }
     await tx.varianteProducto.updateMany({ where: { empresaId, productoId, id: { notIn: activos } }, data: { activa: false } });
