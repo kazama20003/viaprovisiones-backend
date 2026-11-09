@@ -30,6 +30,7 @@ export class ProductosController {
     @SesionActual() sesion: ContextoAutenticado,
     @Query('buscar') buscar?: string,
   ) {
+    const configuracion = await this.prisma.configuracionTienda.findUnique({where:{empresaId:sesion.empresaId},select:{preciosIncluyenIgv:true}});
     const productos = await this.prisma.producto.findMany({
       where: {
         empresaId: sesion.empresaId,
@@ -53,19 +54,19 @@ export class ProductosController {
         historial: { orderBy: { creadoEn: 'desc' }, take: 20, select: { accion: true, creadoEn: true } },
         lotes: {
           select: {
-            id: true, codigo: true, varianteId: true, costoUnitario: true, fechaIngreso: true, garantiaHasta: true, estado: true,
+            id: true, codigo: true, varianteId: true, costoUnitario: true, fechaIngreso: true, fechaVencimiento: true, garantiaHasta: true, estado: true,
             proveedor: { select: { nombre: true } }, variante: { select: { sku: true, atributos: true } },
             existencias: { where: { empresaId: sesion.empresaId }, select: { cantidadFisica: true, cantidadReservada: true, almacen: { select: { id: true, nombre: true, codigo: true } } } },
           },
         },
       },
     });
-    return { datos: productos.map((producto) => ({
+    return { configuracion: {preciosIncluyenIgv: configuracion?.preciosIncluyenIgv ?? true}, datos: productos.map((producto) => ({
       id: producto.id,
       sku: producto.sku,
       nombre: producto.nombre,
       descripcion: producto.descripcion,
-      marca: producto.marca, codigoBarras: producto.codigoBarras, stockMinimo: Number(producto.stockMinimo),
+      marca: producto.marca, codigoBarras: producto.codigoBarras, stockMinimo: Number(producto.stockMinimo), tasaIgv: Number(producto.tasaIgv),
       datosAdicionales: producto.datosAdicionales, historial: producto.historial, categoriaId: producto.categoriaId,
       permiteDelivery: producto.permiteDelivery, permiteAgencia: producto.permiteAgencia, permiteRecojo: producto.permiteRecojo,
       categoria: producto.categoria?.nombre ?? null,
