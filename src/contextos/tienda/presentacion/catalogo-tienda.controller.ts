@@ -95,6 +95,15 @@ export class CatalogoTiendaController {
     };
   }
 
+  @Get('codigo/:sku')
+  async obtenerPorSku(@Param('sku') sku: string) {
+    if (!/^VIA-\d{6,12}$/.test(sku)) throw new NotFoundException('No se encontró el producto.');
+    const empresaId = this.obtenerEmpresaId();
+    const producto = await this.prisma.producto.findFirst({where:{empresaId,sku,estado:'publicado',visibleEnTienda:true},select:{id:true}});
+    if (!producto) throw new NotFoundException('No se encontró el producto.');
+    return this.obtener(producto.id);
+  }
+
   @Get(':id')
   async obtener(@Param('id') id: string) {
     const empresaId = this.obtenerEmpresaId();
