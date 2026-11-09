@@ -212,6 +212,7 @@ model Empresa {
   marcas               Marca[]
   productos            Producto[]
   contadorSku          ContadorSku?
+  contadoresUbicacion  ContadorUbicacion[]
   listasPrecios        ListaPrecios[]
   almacenes            Almacen[]
   sucursales           Sucursal[]
@@ -577,12 +578,25 @@ model PrecioProducto {
   @@map("precios_productos")
 }
 
+model ContadorUbicacion {
+  empresaId    String  @map("empresa_id") @db.Uuid
+  tipo         String  @db.VarChar(12)
+  ultimoNumero BigInt  @default(0) @map("ultimo_numero")
+  empresa      Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@id([empresaId, tipo])
+  @@map("contadores_ubicacion")
+}
+
 model Sucursal {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   empresaId String    @map("empresa_id") @db.Uuid
   codigo    String    @db.VarChar(30)
   nombre    String    @db.VarChar(120)
   direccion String?   @db.VarChar(250)
+  tipo      String    @default("sin_definir") @db.VarChar(30)
+  latitud   Float?
+  longitud  Float?
   activa    Boolean   @default(true)
   empresa   Empresa   @relation(fields: [empresaId], references: [id])
   almacenes Almacen[]
@@ -598,6 +612,8 @@ model Almacen {
   codigo            String                 @db.VarChar(30)
   nombre            String                 @db.VarChar(120)
   direccion         String?                @db.VarChar(250)
+  latitud           Float?
+  longitud          Float?
   tipo              String                 @default("almacen") @db.VarChar(20)
   sucursalId        String?                @map("sucursal_id") @db.Uuid
   activo            Boolean                @default(true)
