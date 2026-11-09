@@ -13,7 +13,7 @@ import {
 import { PrismaService } from '../../../compartido/infraestructura/prisma/prisma.service';
 import { PermisoGuard, RequierePermisos, SesionActual, SesionGuard } from '../../acceso/sesion.guard';
 import type { ContextoAutenticado } from '../../acceso/sesion.guard';
-import { createHash, randomUUID } from 'node:crypto';
+import type { Prisma } from '../../../generated/prisma/client';
 import { claveVariante, combinacionesVariantes } from './variantes';
 
 const estados = ['borrador', 'publicado', 'oculto', 'descontinuado'] as const;
@@ -85,9 +85,7 @@ export class ProductosController {
   @RequierePermisos('catalogo.productos.crear')
   async crear(@SesionActual() sesion: ContextoAutenticado, @Body() cuerpo: Record<string, unknown>) {
     const nombre = this.texto(cuerpo.nombre, 'nombre', 180);
-    if (cuerpo.sku != null && typeof cuerpo.sku !== 'string') throw new BadRequestException('El SKU debe ser texto.');
-    const prefijo = nombre.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 16).replace(/-+$/g, '') || 'PRODUCTO';
-    const sku = typeof cuerpo.sku === 'string' && cuerpo.sku.trim() ? this.texto(cuerpo.sku, 'sku', 60) : `VIA-${prefijo}-${randomUUID().replace(/-/g, '').toUpperCase()}`;
+    if (cuerpo.sku != null && cuerpo.sku !== '') throw new BadRequestException('El SKU se asigna automáticamente.');
     const categoriaId = this.opcionalTexto(cuerpo.categoriaId);
     if (categoriaId) {
       const categoria = await this.prisma.categoria.findFirst({ where: { id: categoriaId, empresaId: sesion.empresaId, activa: true } });
@@ -96,6 +94,7 @@ export class ProductosController {
     const extras = this.campos(cuerpo);
     if (typeof extras.marca === 'string' && extras.marca) await this.comprobarMarca(sesion.empresaId, extras.marca);
     const producto = await this.prisma.$transaction(async tx => {
+      const sku = await this.siguienteSku(tx, sesion.empresaId);
       const categoria = await this.guardarCategoria(tx, sesion.empresaId, cuerpo.categoriaNombre);
       const creado = await tx.producto.create({ data: {
         empresaId: sesion.empresaId,
@@ -120,12 +119,12 @@ export class ProductosController {
     @SesionActual() sesion: ContextoAutenticado,
     @Body() cuerpo: Record<string, unknown>,
   ) {
-    const actual = await this.prisma.producto.findFirst({ where: { id, empresaId: sesion.empresaId }, select: { id: true, categoriaId: true, marca: true } });
+    const actual = await this.prisma.producto.findFirst({ where: { id, empresaId: sesion.empresaId }, select: { id: true, categoriaId: true, marca: true, sku: true } });
     if (!actual) throw new NotFoundException('No se encontró el producto.');
     const data: Record<string, unknown> = this.campos(cuerpo);
     if (typeof data.marca === 'string' && data.marca && data.marca !== actual.marca) await this.comprobarMarca(sesion.empresaId, data.marca);
     if ('nombre' in cuerpo) data.nombre = this.texto(cuerpo.nombre, 'nombre', 180);
-    if ('sku' in cuerpo) data.sku = this.texto(cuerpo.sku, 'sku', 60);
+    if ('sku' in cuerpo && cuerpo.sku !== actual.sku) throw new BadRequestException('El SKU asignado no se puede cambiar.');
     if ('descripcion' in cuerpo) data.descripcion = this.opcionalTexto(cuerpo.descripcion);
     if ('visibleEnTienda' in cuerpo) {
       if (typeof cuerpo.visibleEnTienda !== 'boolean') throw new BadRequestException('visibleEnTienda debe ser booleano.');
@@ -217,7 +216,17 @@ export class ProductosController {
     return categoria.id;
   }
 
-  private async guardarVariantes(tx: Pick<PrismaService, 'varianteProducto'>, empresaId: string, productoId: string, sku: string, details: unknown, precios: unknown) {
+  private async siguienteSku(tx: Prisma.TransactionClient, empresaId: string) {
+    for (;;) {
+      const filas = await tx.$queryRaw<{ ultimo_numero: bigint }[]>`INSERT INTO contadores_sku (empresa_id, ultimo_numero) VALUES (${empresaId}::uuid, 1) ON CONFLICT (empresa_id) DO UPDATE SET ultimo_numero = contadores_sku.ultimo_numero + 1 RETURNING ultimo_numero`;
+      const numero = filas[0].ultimo_numero;
+      if (numero > 999999999999n) throw new BadRequestException('Se agotaron los códigos de producto disponibles.');
+      const codigo = `VIA-${numero.toString().padStart(6, '0')}`;
+      if (!await tx.producto.findFirst({ where: { empresaId, sku: codigo }, select: { id: true } }) && !await tx.varianteProducto.findFirst({ where: { empresaId, sku: codigo }, select: { id: true } })) return codigo;
+    }
+  }
+
+  private async guardarVariantes(tx: Prisma.TransactionClient, empresaId: string, productoId: string, sku: string, details: unknown, precios: unknown) {
     if (!details || typeof details !== 'object') return;
     const combinaciones = combinacionesVariantes(details as Record<string, unknown>);
     if (precios !== undefined && (!precios || typeof precios !== 'object' || Array.isArray(precios))) throw new BadRequestException('Los precios de variantes no son válidos.');
@@ -228,13 +237,16 @@ export class ProductosController {
     const eliminadasConStock = existentes.some(v => v.activa && !claves.has(claveVariante(v.atributos as Record<string, string>)) && v.lotes.some(l => l.existencias.some(e => Number(e.cantidadFisica) > 0)));
     if (eliminadasConStock) throw new BadRequestException('No se puede quitar una variante que tiene stock. Primero ajusta sus existencias a cero.');
     const activos: string[] = [];
+    const base = sku.slice(0, 51);
+    let consecutivo = existentes.reduce((max, v) => { const sufijo = v.sku.startsWith(base + '-') ? v.sku.slice(base.length + 1) : ''; return /^\d{1,8}$/.test(sufijo) ? Math.max(max, Number(sufijo)) : max; }, 0);
     for (const atributos of combinaciones) {
       const clave = claveVariante(atributos);
       const actual = existentes.find(v => claveVariante(v.atributos as Record<string, string>) === clave);
       const precioPublico = Object.hasOwn(tablaPrecios, clave) ? tablaPrecios[clave] as number | null : undefined;
       if (actual) { await tx.varianteProducto.update({ where: { id: actual.id }, data: { activa: true, ...(precioPublico !== undefined ? { precioPublico } : {}) } }); activos.push(actual.id); continue; }
-      const suffix = createHash('sha256').update(`${productoId}:${clave}`).digest('hex').slice(0, 8).toUpperCase();
-      const nueva = await tx.varianteProducto.create({ data: { empresaId, productoId, sku: `${sku.slice(0, 51)}-${suffix}`, atributos, precioPublico } });
+      let codigo: string;
+      do { consecutivo++; if (consecutivo > 99999999) throw new BadRequestException('Se agotaron los códigos de variantes.'); codigo = `${base}-${String(consecutivo).padStart(2, '0')}`; } while (await tx.varianteProducto.findFirst({ where: { empresaId, sku: codigo }, select: { id: true } }) || await tx.producto.findFirst({ where: { empresaId, sku: codigo }, select: { id: true } }));
+      const nueva = await tx.varianteProducto.create({ data: { empresaId, productoId, sku: codigo, atributos, precioPublico } });
       activos.push(nueva.id);
     }
     await tx.varianteProducto.updateMany({ where: { empresaId, productoId, id: { notIn: activos } }, data: { activa: false } });

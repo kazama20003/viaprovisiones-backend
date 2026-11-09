@@ -211,6 +211,7 @@ model Empresa {
   categorias           Categoria[]
   marcas               Marca[]
   productos            Producto[]
+  contadorSku          ContadorSku?
   listasPrecios        ListaPrecios[]
   almacenes            Almacen[]
   sucursales           Sucursal[]
@@ -428,6 +429,14 @@ model Categoria {
   @@unique([empresaId, nombre])
   @@unique([id, empresaId])
   @@map("categorias")
+}
+
+model ContadorSku {
+  empresaId    String  @id @map("empresa_id") @db.Uuid
+  ultimoNumero BigInt  @default(0) @map("ultimo_numero")
+  empresa      Empresa @relation(fields: [empresaId], references: [id], onDelete: Cascade)
+
+  @@map("contadores_sku")
 }
 
 model Producto {
