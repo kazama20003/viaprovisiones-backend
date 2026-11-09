@@ -13,7 +13,7 @@ import {
 import { PrismaService } from '../../../compartido/infraestructura/prisma/prisma.service';
 import { PermisoGuard, RequierePermisos, SesionActual, SesionGuard } from '../../acceso/sesion.guard';
 import type { ContextoAutenticado } from '../../acceso/sesion.guard';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { claveVariante, combinacionesVariantes } from './variantes';
 
 const estados = ['borrador', 'publicado', 'oculto', 'descontinuado'] as const;
@@ -85,7 +85,9 @@ export class ProductosController {
   @RequierePermisos('catalogo.productos.crear')
   async crear(@SesionActual() sesion: ContextoAutenticado, @Body() cuerpo: Record<string, unknown>) {
     const nombre = this.texto(cuerpo.nombre, 'nombre', 180);
-    const sku = this.texto(cuerpo.sku, 'sku', 60);
+    if (cuerpo.sku != null && typeof cuerpo.sku !== 'string') throw new BadRequestException('El SKU debe ser texto.');
+    const prefijo = nombre.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 16).replace(/-+$/g, '') || 'PRODUCTO';
+    const sku = typeof cuerpo.sku === 'string' && cuerpo.sku.trim() ? this.texto(cuerpo.sku, 'sku', 60) : `VIA-${prefijo}-${randomUUID().replace(/-/g, '').toUpperCase()}`;
     const categoriaId = this.opcionalTexto(cuerpo.categoriaId);
     if (categoriaId) {
       const categoria = await this.prisma.categoria.findFirst({ where: { id: categoriaId, empresaId: sesion.empresaId, activa: true } });
